@@ -14,6 +14,7 @@ import           Data.Default
 import qualified Data.HashMap.Strict   as HM
 import           Data.List
 import           Data.Monoid
+import           Data.Ord
 import           Data.Serialize
 import qualified Data.Vector           as V
 import           Debug.Trace
@@ -27,7 +28,7 @@ import           Hadoop.Streaming
 
 type DataDefs = [(DataSet, JoinType)]
 
-data JoinType = Inner | Outer
+data JoinType = JRequired | JOptional
 
 
 type DataSet = B.ByteString
@@ -37,13 +38,13 @@ type JoinKey = B.ByteString
 
 data JoinAcc a =
     Buffering {
-      bufData   :: ! (HM.HashMap DataSet [a])
+      bufData  :: ! (HM.HashMap DataSet [a])
     -- ^ Buffer of in-memory retained data. We have to retain (n-1) of
     -- the input datasets and we can then start emitting rows in
     -- constant-space for the nth dataset.
-    , bufCurDS  :: Maybe DataSet
+    , bufCurDS :: Maybe DataSet
     -- ^ DataSet we are currently streaming for the current JoinKey
-    , bufDoneDS :: V.Vector DataSet
+    -- , bufDoneDS :: V.Vector DataSet
     -- ^ List of datasets done streaming for the current JoinKey
     }
     | Streaming { strStems :: V.Vector a }
@@ -52,7 +53,7 @@ data JoinAcc a =
 
 
 instance Default (JoinAcc a) where
-    def = Buffering mempty Nothing mempty
+    def = Buffering mempty Nothing -- mempty
 
 
 
@@ -64,30 +65,27 @@ bufToStr
     :: Monoid a
     => DataDefs
     -- ^ Table definitions for the current join
-    -> DataSet
-    -- ^ The last remaining table in the joined tables
     -> JoinAcc a
     -- ^ Buffering
     -> JoinAcc a
     -- ^ Streaming
-bufToStr defs lastDS Buffering{..} = Streaming rs
+bufToStr defs Buffering{..} = Streaming rs
     where
       rs = V.fromList $ maybe [] (map mconcat . sequence) groups
-
-      data' = foldl' step bufData defs
 
       -- | Maybe will reduce to Nothing if any of the Inner joins is
       -- missing.
       groups = mapM (flip HM.lookup data' . fst) defs
 
-      step m (ds, Outer)
-          | ds == lastDS = HM.insertWith insMissing ds [mempty] m
-          | otherwise    = m
-      step m (ds, Inner) = HM.insertWith insMissing ds [mempty] m
+      data' = foldl' step bufData defs
+
+      step m (ds, JRequired) = m
+      step m (ds, JOptional) = HM.insertWith insMissing ds [mempty] m
 
       insMissing new [] = new
       insMissing _ old = old
-bufToStr _ _ _ = error "bufToStr can only convert a Buffering to a Streaming"
+bufToStr _ _ = error "bufToStr can only convert a Buffering to a Streaming"
+
 
 
 
@@ -105,6 +103,43 @@ joinOpts = ReduceOpts eq 2 ser
       eq [a1,a2] [b1,b2] = a1 == b1
 
 
+
+joinReducer
+    :: (Show b, Monoid b, MonadIO m, MonadThrow m, Serialize b)
+    => [(DataSet, JoinType)]
+    -- ^ Table definitions
+    -> (b -> B.ByteString)
+    -- ^ Convert resulting rows to bytestring
+    -> m ()
+joinReducer fs f = reducer joinOpts step def fin
+    where
+      step = joinReduceStep fs f'
+      fin = joinFinalize fs f'
+      f' = emitOutput . f
+
+
+-- | Helper to construct a finalizer for join operations.
+joinFinalize
+    :: (Monad m, Monoid a)
+    => [(DataSet, JoinType)]
+    -> (a -> m ())
+    -> t
+    -> JoinAcc a
+    -> m ()
+
+-- we're still in buffering, so nothing has been emitted yet. one of
+-- the tables (and definitely the last table) did not have any input
+-- at all. we'll try to emit in case the last table is not a required
+-- table.
+joinFinalize fs f _ buf@Buffering{..} =
+  let str = bufToStr fs buf
+  in  emitStream f str mempty
+
+-- we're already in streaming, so we've been emitting output in
+-- real-time. nothing left to do at this point.
+joinFinalize _ _ _ Streaming{..} = return ()
+
+
 -------------------------------------------------------------------------------
 -- | Make a step function for a join operation
 joinReduceStep
@@ -113,31 +148,41 @@ joinReduceStep
     -> (a -> m ())
     -> Reducer m a (JoinAcc a)
 joinReduceStep fs f k buf@Buffering{..} x =
-    case V.length done == n of
-      False -> traceShow accumulate $ return $! accumulate
-      True -> joinReduceStep fs f k (bufToStr fs ds buf) x
+
+    -- | Accumulate until you start seeing the last table. We'll start
+    -- emitting immediately after that.
+    case ds == lastDataSet of
+      False -> -- traceShow accumulate $
+               return $! accumulate
+      True ->
+        let fs' = filter ((/= ds) . fst) fs
+        in joinReduceStep fs f k (bufToStr fs' buf) x
 
     where
-      -- | point when we can start emitting
-      n = length fs - 1
+
+      fs' = sortBy (comparing fst) fs
+
+      lastDataSet = fst $ last fs'
 
       accumulate =
           Buffering { bufData = HM.insertWith add ds [x] bufData
                     , bufCurDS = Just ds
-                    , bufDoneDS = done }
+                    -- , bufDoneDS = done
+                    }
 
-      -- | add to done if the prev dataset is finished
-      done =
-        case bufCurDS of
-          Nothing -> bufDoneDS
-          Just ds' ->
-            case ds' == ds of
-              True -> bufDoneDS
-              False -> V.cons ds' bufDoneDS
+      -- -- | add to done if the prev dataset is finished
+      -- done =
+      --   case bufCurDS of
+      --     Nothing -> bufDoneDS
+      --     Just ds' ->
+      --       case ds' == ds of
+      --         True -> bufDoneDS
+      --         False -> V.cons ds' bufDoneDS
+
       add new old = new ++ old
       [jk, ds] = k
 
-joinReduceStep fs f k str@Streaming{} x = emitStream f str x >> return str
+joinReduceStep _ f k str@Streaming{} x = emitStream f str x >> return str
 
 
 

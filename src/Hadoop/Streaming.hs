@@ -215,6 +215,7 @@ reducer ReduceOpts{..} f a0 fin = do
                   !a' <- case roEq curKey k of
                     True -> lift $ f' k a v
                     False -> do
+                      -- liftIO $ print $ "finalizing key: " ++ show curKey
                       finalize curKey a
                       lift $ f' k a0 v
                   go (Just (k, a'))
