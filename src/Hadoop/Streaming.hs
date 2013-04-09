@@ -1,8 +1,10 @@
 {-# LANGUAGE BangPatterns              #-}
 {-# LANGUAGE FlexibleContexts          #-}
+{-# LANGUAGE FlexibleInstances         #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE OverloadedStrings         #-}
 {-# LANGUAGE RankNTypes                #-}
+{-# LANGUAGE RecordWildCards           #-}
 
 module Hadoop.Streaming
     (
@@ -16,11 +18,16 @@ module Hadoop.Streaming
 
      -- * MapReduce Construction
 
+    , emitOutput
+
     , mapper
     , mapperWith
 
+    , ReduceOpts (..)
     , reducer
-    , reducerWith
+    -- , reducerWith
+    , noopFin
+
 
     -- * Hadoop Utilities
     , emitCounter
@@ -45,8 +52,9 @@ import qualified Data.ByteString.Base64           as Base64
 import qualified Data.ByteString.Char8            as B
 import           Data.Conduit
 import           Data.Conduit.Attoparsec
-import           Data.Conduit.Binary
+import           Data.Conduit.Binary              (sinkHandle, sourceHandle)
 import qualified Data.Conduit.List                as C
+import           Data.Default
 import qualified Data.Map                         as M
 import qualified Data.Serialize                   as Ser
 import           System.IO
@@ -93,13 +101,14 @@ type Value = B.ByteString
 
 
 -- | Parse lines of (key,value) for hadoop reduce stage
-lineC :: MonadThrow m => Conduit B.ByteString m (B.ByteString, B.ByteString)
-lineC = conduitParser parseLine =$= C.map (ppair . snd)
+lineC :: MonadThrow m => Int -> Conduit B.ByteString m ([Key], B.ByteString)
+lineC n = conduitParser parseLine =$= C.map (ppair . snd)
     where
       ppair line = (k, v)
           where
-            (k, v') = B.span (/= '\t') line
-            v = B.drop 1 v'
+            k = take n spl
+            v = B.intercalate "\t" $ drop n spl
+            spl = B.split '\t' line
 
 
 
@@ -127,12 +136,17 @@ mapper f = sourceHandle stdin =$= f =$= C.map conv $$ sinkHandle stdout
       conv (k,v) = B.concat [k, "\t", v, "\n"]
 
 
-type Mapper m a     = Conduit B.ByteString m (Key, a)
-type Reducer m a t  = (Key -> t -> a -> m t)
+type Mapper m a     = Conduit B.ByteString m ([Key], a)
+type Reducer m b a  = ([Key] -> a -> b -> m a)
 
 -- | It is up to you to call 'emitOutput' as part of this function to
 -- actually emit results.
-type Finalizer m t  = (Key -> t -> m ())
+type Finalizer m a  = ([Key] -> a -> m ())
+
+
+-- | A no-op finalizer.
+noopFin :: Monad m => Finalizer m a
+noopFin _ _ = return ()
 
 
 -- | Use this whenever you want to emit a line to the output as part
@@ -141,48 +155,53 @@ emitOutput :: MonadIO m => B.ByteString -> m ()
 emitOutput bs = liftIO $ B.hPutStrLn stdout bs
 
 
--- | Like 'reducer' but automatically parses values using given Prism.
-reducerWith
-    :: (MonadThrow m, MonadIO m)
-    => Prism' B.ByteString a
-    -- ^ Serialization prism
-    -> Reducer m a t
-    -- ^ A step function
-    -> (Key -> Key -> Bool)
+
+
+data ReduceOpts a = ReduceOpts {
+      roEq      :: ([Key] -> [Key] -> Bool)
     -- ^ An equivalence test for incoming keys. True means given two
     -- keys are part of the same reduce series.
-    -> t
-    -- ^ Accumulator
-    -> Finalizer m t
-    -- ^ What to do with the final accumulator
-    -> m ()
-reducerWith p f eqTest a0 fin = reducer f' eqTest a0 fin
-    where
-      f' k !a' v =
-        case firstOf p v of
-          Nothing -> return a'
-          Just v' -> f k a' v'
+    , roKeySegs :: Int
+    -- ^ Number of segments to expect in incoming keys.
+    , roPrism   :: Prism' B.ByteString a
+    -- ^ A serialization scheme for the incoming values.
+    }
+
+
+instance Default (ReduceOpts B.ByteString) where
+    def = ReduceOpts (==) 1 id
+
+
+instance Ser.Serialize a => Default (ReduceOpts a) where
+    def = ReduceOpts (==) 1 ser
 
 
 -- | An easy way to construct a reducer pogram. Just supply the
 -- arguments and you're done.
+--
+-- m : Monad
+-- b : Incoming stream type
+-- a : Accumulator type
 reducer
     :: (MonadIO m, MonadThrow m)
-    => Reducer m Value t
+    => ReduceOpts b
+    -> Reducer m b a
     -- ^ A step function for the given key.
-    -> (Key -> Key -> Bool)
-    -- ^ An equivalence test for incoming keys. True means given two
-    -- keys are part of the same reduce series.
-    -> t
+    -> a
     -- ^ Inital state.
-    -> Finalizer m t
+    -> Finalizer m a
     -- ^ What to do with the final state for a given key.
     -> m ()
-reducer f eqTest a0 fin = do
+reducer ReduceOpts{..} f a0 fin = do
     liftIO $ hSetBuffering stderr LineBuffering
     liftIO $ hSetBuffering stdout LineBuffering
     stream
     where
+      f' k !a' v =
+        case firstOf roPrism v of
+          Nothing -> return a'
+          Just v' -> f k a' v'
+
       go cur = do
           next <- await
           case next of
@@ -193,21 +212,21 @@ reducer f eqTest a0 fin = do
             Just (k,v) ->
               case cur of
                 Just (curKey, a) -> do
-                  !a' <- case eqTest curKey k of
-                    True -> lift $ f k a v
+                  !a' <- case roEq curKey k of
+                    True -> lift $ f' k a v
                     False -> do
                       finalize curKey a
-                      lift $ f k a0 v
+                      lift $ f' k a0 v
                   go (Just (k, a'))
                 Nothing -> do
-                  !a' <- lift $ f k a0 v
+                  !a' <- lift $ f' k a0 v
                   go (Just (k, a'))
 
       finalize k v = lift $ fin k v
 
 
       stream = sourceHandle stdin $=
-               lineC $$
+               lineC roKeySegs $$
                go Nothing
 
 

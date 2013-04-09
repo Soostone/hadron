@@ -14,7 +14,9 @@ import           Data.Default
 import qualified Data.HashMap.Strict   as HM
 import           Data.List
 import           Data.Monoid
+import           Data.Serialize
 import qualified Data.Vector           as V
+import           Debug.Trace
 import           System.Environment
 -------------------------------------------------------------------------------
 import           Hadoop.Streaming
@@ -51,19 +53,6 @@ data JoinAcc a =
 
 instance Default (JoinAcc a) where
     def = Buffering mempty Nothing mempty
-
-
--- | Built-in separatar char is | for now.
-breakKey :: Key -> (JoinKey, DataSet)
-breakKey k = over _2 (B.drop 1) $ B.span (/= '\t') k
-
-
--- | Consider two keys equal if they share the same join root
-joinEq :: Key -> Key -> Bool
-joinEq k1 k2 = jk1 == jk2
-    where
-      (jk1, ds1) = breakKey k1
-      (jk2, ds2) = breakKey k2
 
 
 
@@ -109,21 +98,23 @@ emitStream :: (Monad m, Monoid a) => (a -> m ()) -> JoinAcc a -> a -> m ()
 emitStream f Streaming{..} a = V.mapM_ (f . mappend a) strStems
 
 
+-------------------------------------------------------------------------------
+joinOpts :: Serialize a => ReduceOpts a
+joinOpts = ReduceOpts eq 2 ser
+    where
+      eq [a1,a2] [b1,b2] = a1 == b1
+
 
 -------------------------------------------------------------------------------
 -- | Make a step function for a join operation
 joinReduceStep
-    :: (Monad m, Monoid a)
+    :: (Monad m, Monoid a, Show a)
     => DataDefs
     -> (a -> m ())
-    -> Key
-    -> JoinAcc a
-    -> a
-    -> m (JoinAcc a)
-
+    -> Reducer m a (JoinAcc a)
 joinReduceStep fs f k buf@Buffering{..} x =
-    case V.length bufDoneDS == n of
-      False -> return $! accumulate
+    case V.length done == n of
+      False -> traceShow accumulate $ return $! accumulate
       True -> joinReduceStep fs f k (bufToStr fs ds buf) x
 
     where
@@ -144,7 +135,7 @@ joinReduceStep fs f k buf@Buffering{..} x =
               True -> bufDoneDS
               False -> V.cons ds' bufDoneDS
       add new old = new ++ old
-      (jk, ds) = breakKey k
+      [jk, ds] = k
 
 joinReduceStep fs f k str@Streaming{} x = emitStream f str x >> return str
 
@@ -158,14 +149,14 @@ mapJoin
     -- ^ Figure out the current dataset given map input file
     -> Prism' B.ByteString a
     -- ^ Prism for serialization
-    -> Conduit B.ByteString m (JoinKey, a)
+    -> (DataSet -> Conduit (B.ByteString) m (JoinKey, a))
     -- ^ A conduit to convert incoming stream into a join-key and a
     -- target value.
     -> m ()
 mapJoin getDS prism f = do
     fi <- liftIO $ getEnv "map_input_file"
     let ds = getDS fi
-    mapperWith prism $ f =$= C.map (go ds)
+    mapperWith prism $ f ds =$= C.map (go ds)
   where
     go ds (jk, a) = (B.concat [jk, "\t", ds], a)
 
