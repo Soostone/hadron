@@ -26,6 +26,7 @@ library
      base64-bytestring,
      bytestring,
      conduit >= 1.0,
+     conduit-utils,
      attoparsec-conduit >= 1.0,
      containers,
      cereal,

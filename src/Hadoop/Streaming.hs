@@ -58,6 +58,7 @@ import           Data.Conduit
 import           Data.Conduit.Attoparsec
 import           Data.Conduit.Binary              (sinkHandle, sourceHandle)
 import qualified Data.Conduit.List                as C
+import           Data.Conduit.Utils
 import           Data.Default
 import qualified Data.Map                         as M
 import qualified Data.Serialize                   as Ser
@@ -145,9 +146,11 @@ mapperWith p f = mapper $ f =$= C.mapMaybe conv
 
 -- | Construct a mapper program using a given Conduit.
 mapper :: MonadIO m => Conduit B.ByteString m (B.ByteString, B.ByteString) -> m ()
-mapper f = sourceHandle stdin =$= f =$= C.map conv $$ sinkHandle stdout
+mapper f = sourceHandle stdin =$= f =$= performEvery 10 log =$= C.map conv $$ sinkHandle stdout
     where
       conv (k,v) = B.concat [k, "\t", v, "\n"]
+      log i = liftIO $ emitCounter "mapper" "rows_emitted" 10
+
 
 
 type Mapper m a     = Conduit B.ByteString m ([Key], a)
