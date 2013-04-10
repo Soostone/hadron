@@ -17,7 +17,6 @@ module Hadoop.Streaming
     , Finalizer
 
      -- * MapReduce Construction
-
     , emitOutput
 
     , mapper
@@ -37,6 +36,11 @@ module Hadoop.Streaming
     , ser
     , serialize
     , deserialize
+
+    -- * Utils
+    , linesConduit
+    , lineC
+    , mkKey
     ) where
 
 
@@ -75,6 +79,11 @@ ser :: Ser.Serialize a => Prism' B.ByteString a
 ser = prism serialize (\x -> either (const $ Left x) Right $ deserialize x)
 
 
+-- | Useful when making a key from multiple pieces of data
+mkKey :: [B.ByteString] -> B.ByteString
+mkKey = B.intercalate "|"
+
+
 showBS :: Show a => a -> B.ByteString
 showBS = B.pack . show
 
@@ -100,9 +109,14 @@ type Key = B.ByteString
 type Value = B.ByteString
 
 
+-- | Turn incoming stream into a stream of lines
+linesConduit :: MonadThrow m => Conduit B.ByteString m B.ByteString
+linesConduit = conduitParser parseLine =$= C.map snd
+
+
 -- | Parse lines of (key,value) for hadoop reduce stage
 lineC :: MonadThrow m => Int -> Conduit B.ByteString m ([Key], B.ByteString)
-lineC n = conduitParser parseLine =$= C.map (ppair . snd)
+lineC n = linesConduit =$= C.map ppair
     where
       ppair line = (k, v)
           where
