@@ -243,8 +243,11 @@ reducer ReduceOpts{..} f a0 fin = do
       finalize k v = lift $ fin k v
 
 
+      log i = liftIO $ emitCounter "reducer" "rows_processed" 10
+
       stream = sourceHandle stdin $=
-               lineC roKeySegs $$
+               lineC roKeySegs $=
+               performEvery 10 log $$
                go Nothing
 
 
