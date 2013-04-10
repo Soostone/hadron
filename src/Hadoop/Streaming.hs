@@ -18,6 +18,7 @@ module Hadoop.Streaming
 
      -- * MapReduce Construction
     , emitOutput
+    , emitStatus
 
     , mapper
     , mapperWith
@@ -102,7 +103,9 @@ emitCounter grp counter inc = B.hPutStrLn stderr txt
       txt = B.concat ["reporter:counter:", grp, ":", counter, ":", showBS inc]
 
 
-emitStatus = undefined
+emitStatus msg = B.hPutStrLn stderr txt
+    where
+      txt = B.concat ["reporter:status:", msg]
 
 
 type Key = B.ByteString
