@@ -146,7 +146,11 @@ mapperWith p f = mapper $ f =$= C.mapMaybe conv
 
 -- | Construct a mapper program using a given Conduit.
 mapper :: MonadIO m => Conduit B.ByteString m (B.ByteString, B.ByteString) -> m ()
-mapper f = sourceHandle stdin =$= f =$= performEvery 10 log =$= C.map conv $$ sinkHandle stdout
+mapper f = do
+    liftIO $ hSetBuffering stderr LineBuffering
+    liftIO $ hSetBuffering stdout LineBuffering
+
+    sourceHandle stdin =$= f =$= performEvery 10 log =$= C.map conv $$ sinkHandle stdout
     where
       conv (k,v) = B.concat [k, "\t", v, "\n"]
       log i = liftIO $ emitCounter "mapper" "rows_emitted" 10
