@@ -189,10 +189,6 @@ instance Default (ReduceOpts B.ByteString) where
     def = ReduceOpts (==) 1 id
 
 
-instance Ser.Serialize a => Default (ReduceOpts a) where
-    def = ReduceOpts (==) 1 ser
-
-
 -- | An easy way to construct a reducer pogram. Just supply the
 -- arguments and you're done.
 --
