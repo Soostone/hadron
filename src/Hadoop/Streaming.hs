@@ -18,7 +18,6 @@ module Hadoop.Streaming
 
      -- * MapReduce Construction
     , emitOutput
-    , emitStatus
 
     , mapper
     , mapperWith
@@ -100,9 +99,11 @@ emitCounter
     -> IO ()
 emitCounter grp counter inc = B.hPutStrLn stderr txt
     where
-      txt = B.concat ["reporter:counter:", grp, ":", counter, ":", showBS inc]
+      txt = B.concat ["reporter:counter:", grp, ",", counter, ",", showBS inc]
 
 
+-- | Emit a status line
+emitStatus :: B.ByteString -> IO ()
 emitStatus msg = B.hPutStrLn stderr txt
     where
       txt = B.concat ["reporter:status:", msg]
@@ -150,10 +151,14 @@ mapperWith p f = mapper $ f =$= C.mapMaybe conv
 -- | Construct a mapper program using a given Conduit.
 mapper :: MonadIO m => Conduit B.ByteString m (B.ByteString, B.ByteString) -> m ()
 mapper f = do
-    liftIO $ hSetBuffering stderr LineBuffering
-    liftIO $ hSetBuffering stdout LineBuffering
-
-    sourceHandle stdin =$= f =$= performEvery 10 log =$= C.map conv $$ sinkHandle stdout
+    liftIO $ hSetBuffering stderr NoBuffering
+    liftIO $ hSetBuffering stdout NoBuffering
+    liftIO $ hSetBuffering stdin NoBuffering
+    sourceHandle stdin =$=
+      f =$=
+      performEvery 10 log =$=
+      C.map conv $$
+      sinkHandle stdout
     where
       conv (k,v) = B.concat [k, "\t", v, "\n"]
       log i = liftIO $ emitCounter "mapper" "rows_emitted" 10
@@ -213,8 +218,9 @@ reducer
     -- ^ What to do with the final state for a given key.
     -> m ()
 reducer ReduceOpts{..} f a0 fin = do
-    liftIO $ hSetBuffering stderr LineBuffering
-    liftIO $ hSetBuffering stdout LineBuffering
+    liftIO $ hSetBuffering stderr NoBuffering
+    liftIO $ hSetBuffering stdout NoBuffering
+    liftIO $ hSetBuffering stdin NoBuffering
     stream
     where
       f' k !a' v =
