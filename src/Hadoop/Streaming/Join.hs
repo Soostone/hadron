@@ -223,17 +223,10 @@ joinMain :: (MonadIO m, Serialize a, Monoid a, MonadThrow m, Show a)
 joinMain fs getDS mkMap emit = mapReduceMain joinOpts mp rd def fin
     where
 
-      conv = do
+      mp = do
           fi <- liftIO $ getEnv "map_input_file"
           let ds = getDS fi
-          C.map (go ds)
-
-      mp' = do
-          fi <- liftIO $ getEnv "map_input_file"
-          let ds = getDS fi
-          mkMap ds
-
-      mp = mp' =$= conv
+          mkMap ds =$= C.map (go ds)
 
       go ds (jk, a) = ([jk, ds], a)
 
