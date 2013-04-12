@@ -32,7 +32,8 @@ library
      cereal,
      vector,
      unordered-containers,
-     data-default
+     data-default,
+     optparse-applicative
   hs-source-dirs:      src
   default-language:    Haskell2010
 

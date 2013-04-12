@@ -97,8 +97,8 @@ emitStream f Streaming{..} a = V.mapM_ (f . mappend a) strStems
 
 
 -------------------------------------------------------------------------------
-joinOpts :: Serialize a => ReduceOpts a
-joinOpts = ReduceOpts eq 2 ser
+joinOpts :: Serialize a => MROptions a
+joinOpts = MROptions eq 2 ser
     where
       eq [a1,a2] [b1,b2] = a1 == b1
 
@@ -203,10 +203,39 @@ mapJoin getDS prism f = do
     let ds = getDS fi
     mapperWith prism $ f ds =$= C.map (go ds)
   where
-    go ds (jk, a) = (B.concat [jk, "\t", ds], a)
+    go ds (jk, a) = ([jk, ds], a)
 
 
 
 
+                           ------------------------
+                           -- A Main Application --
+                           ------------------------
 
 
+-------------------------------------------------------------------------------
+joinMain :: (MonadIO m, Serialize a, Monoid a, MonadThrow m, Show a)
+         => DataDefs
+         -> (String -> DataSet)
+         -> (DataSet -> Conduit B.ByteString m (JoinKey, a))
+         -> (a -> m ())
+         -> m ()
+joinMain fs getDS mkMap emit = mapReduceMain joinOpts mp rd def fin
+    where
+
+      conv = do
+          fi <- liftIO $ getEnv "map_input_file"
+          let ds = getDS fi
+          C.map (go ds)
+
+      mp' = do
+          fi <- liftIO $ getEnv "map_input_file"
+          let ds = getDS fi
+          mkMap ds
+
+      mp = mp' =$= conv
+
+      go ds (jk, a) = ([jk, ds], a)
+
+      rd = joinReduceStep fs emit
+      fin = joinFinalize fs emit

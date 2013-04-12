@@ -16,21 +16,24 @@ module Hadoop.Streaming
     , Reducer
     , Finalizer
 
-     -- * MapReduce Construction
-    , emitOutput
-
-    , mapper
-    , mapperWith
-
-    , ReduceOpts (..)
-    , reducer
-    -- , reducerWith
-    , noopFin
-
 
     -- * Hadoop Utilities
     , emitCounter
     , emitStatus
+    , emitOutput
+
+     -- * MapReduce Construction
+    , MROptions (..)
+    , mapReduceMain
+    , mapReduce
+
+    , mapper
+    , mapperWith
+
+    , reducer
+    , noopFin
+
+
 
     -- * Serialization of Haskell Types
     , ser
@@ -62,6 +65,7 @@ import           Data.Conduit.Utils
 import           Data.Default
 import qualified Data.Map                         as M
 import qualified Data.Serialize                   as Ser
+import           Options.Applicative              hiding (Parser)
 import           System.IO
 -------------------------------------------------------------------------------
 
@@ -131,17 +135,28 @@ lineC n = linesConduit =$= C.map ppair
 
 
 
-parseLine :: Parser B.ByteString
-parseLine = ln <* endOfLine
+-------------------------------------------------------------------------------
+mapReduce
+    :: (MonadIO m, MonadThrow m)
+    => MROptions a
+    -> Mapper m a
+    -> Reducer m a b
+    -> b
+    -> Finalizer m b
+    -> (m (), m ())
+mapReduce mro f g a0 z = (mp, rd)
     where
-      ln = takeTill (== '\n')
+      mp = mapperWith (mroPrism mro) f
+      rd = reducer mro g a0 z
+
+
 
 
 -- | Construct a mapper program using given serialization Prism.
 mapperWith
     :: MonadIO m
     => Prism' B.ByteString t
-    -> Conduit B.ByteString m (Key, t)
+    -> Conduit B.ByteString m ([Key], t)
     -> m ()
 mapperWith p f = mapper $ f =$= C.mapMaybe conv
     where
@@ -149,28 +164,28 @@ mapperWith p f = mapper $ f =$= C.mapMaybe conv
 
 
 -- | Construct a mapper program using a given Conduit.
-mapper :: MonadIO m => Conduit B.ByteString m (B.ByteString, B.ByteString) -> m ()
+mapper :: MonadIO m => Conduit B.ByteString m ([Key], B.ByteString) -> m ()
 mapper f = do
-    liftIO $ hSetBuffering stderr NoBuffering
-    liftIO $ hSetBuffering stdout NoBuffering
-    liftIO $ hSetBuffering stdin NoBuffering
+    liftIO $ hSetBuffering stderr LineBuffering
+    liftIO $ hSetBuffering stdout LineBuffering
+    liftIO $ hSetBuffering stdin LineBuffering
     sourceHandle stdin =$=
       f =$=
       performEvery 10 log =$=
       C.map conv $$
       sinkHandle stdout
     where
-      conv (k,v) = B.concat [k, "\t", v, "\n"]
+      conv (k,v) = B.concat [B.intercalate "\t" k, "\t", v, "\n"]
       log i = liftIO $ emitCounter "mapper" "rows_emitted" 10
 
 
 
 type Mapper m a     = Conduit B.ByteString m ([Key], a)
-type Reducer m b a  = ([Key] -> a -> b -> m a)
+type Reducer m a b  = [Key] -> b -> a -> m b
 
 -- | It is up to you to call 'emitOutput' as part of this function to
 -- actually emit results.
-type Finalizer m a  = ([Key] -> a -> m ())
+type Finalizer m a  = [Key] -> a -> m ()
 
 
 -- | A no-op finalizer.
@@ -184,21 +199,19 @@ emitOutput :: MonadIO m => B.ByteString -> m ()
 emitOutput bs = liftIO $ B.hPutStrLn stdout bs
 
 
-
-
-data ReduceOpts a = ReduceOpts {
-      roEq      :: ([Key] -> [Key] -> Bool)
+data MROptions a = MROptions {
+      mroEq      :: ([Key] -> [Key] -> Bool)
     -- ^ An equivalence test for incoming keys. True means given two
     -- keys are part of the same reduce series.
-    , roKeySegs :: Int
+    , mroKeySegs :: Int
     -- ^ Number of segments to expect in incoming keys.
-    , roPrism   :: Prism' B.ByteString a
+    , mroPrism   :: Prism' B.ByteString a
     -- ^ A serialization scheme for the incoming values.
     }
 
 
-instance Default (ReduceOpts B.ByteString) where
-    def = ReduceOpts (==) 1 id
+instance Default (MROptions B.ByteString) where
+    def = MROptions (==) 1 id
 
 
 -- | An easy way to construct a reducer pogram. Just supply the
@@ -209,7 +222,7 @@ instance Default (ReduceOpts B.ByteString) where
 -- a : Accumulator type
 reducer
     :: (MonadIO m, MonadThrow m)
-    => ReduceOpts b
+    => MROptions b
     -> Reducer m b a
     -- ^ A step function for the given key.
     -> a
@@ -217,14 +230,14 @@ reducer
     -> Finalizer m a
     -- ^ What to do with the final state for a given key.
     -> m ()
-reducer ReduceOpts{..} f a0 fin = do
-    liftIO $ hSetBuffering stderr NoBuffering
-    liftIO $ hSetBuffering stdout NoBuffering
-    liftIO $ hSetBuffering stdin NoBuffering
+reducer MROptions{..} f a0 fin = do
+    liftIO $ hSetBuffering stderr LineBuffering
+    liftIO $ hSetBuffering stdout LineBuffering
+    liftIO $ hSetBuffering stdin LineBuffering
     stream
     where
       f' k !a' v =
-        case firstOf roPrism v of
+        case firstOf mroPrism v of
           Nothing -> return a'
           Just v' -> f k a' v'
 
@@ -238,7 +251,7 @@ reducer ReduceOpts{..} f a0 fin = do
             Just (k,v) ->
               case cur of
                 Just (curKey, a) -> do
-                  !a' <- case roEq curKey k of
+                  !a' <- case mroEq curKey k of
                     True -> lift $ f' k a v
                     False -> do
                       -- liftIO $ print $ "finalizing key: " ++ show curKey
@@ -255,26 +268,64 @@ reducer ReduceOpts{..} f a0 fin = do
       log i = liftIO $ emitCounter "reducer" "rows_processed" 10
 
       stream = sourceHandle stdin $=
-               lineC roKeySegs $=
+               lineC mroKeySegs $=
                performEvery 10 log $$
                go Nothing
 
 
 
--- | Partition the input stream so that this function recurses while
--- the input stream is for the same key and returns the newly seen key
--- when it's done.
+parseLine :: Parser B.ByteString
+parseLine = ln <* endOfLine
+    where
+      ln = takeTill (== '\n')
+
+
+                              ------------------
+                              -- Main Program --
+                              ------------------
+
+
+
+-------------------------------------------------------------------------------
+-- | A default main that will respond to 'map' and 'reduce' commands
+-- to run the right phase appropriately.
 --
--- So you get to call this function once per the key that is being
--- reduced.
-mrPartition :: (Eq k, Monad m) => Maybe k -> ConduitM (k, v) v m (Maybe k)
-mrPartition curKey = do
-    next <- await
-    case next of
-      Nothing -> return Nothing
-      Just x@(k,v) ->
-        case (Just k == curKey) of
-          True -> yield v >> mrPartition curKey
-          False -> do
-            leftover x
-            return $! Just k
+-- This is the recommended approach to designing a map-reduce program.
+mapReduceMain
+    :: (MonadIO m, MonadThrow m)
+    => MROptions a
+    -> Mapper m a
+    -> Reducer m a b
+    -> b
+    -> Finalizer m b
+    -> m ()
+mapReduceMain mro f g a0 z = liftIO (execParser opts) >>= run
+  where
+    (mp,rd) = mapReduce mro f g a0 z
+
+    run Map = mp
+    run Reduce = rd
+
+
+    opts = info (helper <*> commandParse)
+      ( fullDesc
+      <> progDesc "This is a Hadoop Streaming Map/Reduce binary. "
+      <> header "hadoop-streaming - use Haskell as your streaming Hadoop program."
+      )
+
+
+data Command = Map | Reduce
+
+
+-------------------------------------------------------------------------------
+commandParse = subparser
+    ( command "map" (info (pure Map)
+        ( progDesc "Run mapper." ))
+   <> command "reduce" (info (pure Reduce)
+        ( progDesc "Run reducer" ))
+    )
+
+
+
+
+
