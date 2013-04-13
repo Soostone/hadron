@@ -4,6 +4,10 @@
 
 module Hadoop.Streaming.Join
     ( joinMain
+    , DataDefs
+    , DataSet
+    , JoinType (..)
+    , JoinKey
     ) where
 
 -------------------------------------------------------------------------------
@@ -182,28 +186,6 @@ joinReduceStep fs buf@Buffering{..} (k, x) =
       [jk, ds] = k
 
 joinReduceStep _ str@Streaming{} (k,x) = emitStream str x >> return str
-
-
-
--------------------------------------------------------------------------------
--- | Execute a mapper program tailored to emit file tags with keys.
-mapJoin
-    :: MonadIO m
-    => (String -> DataSet)
-    -- ^ Figure out the current dataset given map input file
-    -> Prism' B.ByteString a
-    -- ^ Prism for serialization
-    -> (DataSet -> Conduit (B.ByteString) m (JoinKey, a))
-    -- ^ A conduit to convert incoming stream into a join-key and a
-    -- target value.
-    -> m ()
-mapJoin getDS prism f = do
-    fi <- liftIO $ getEnv "map_input_file"
-    let ds = getDS fi
-    mapperWith prism $ f ds =$= C.map (go ds)
-  where
-    go ds (jk, a) = ([jk, ds], a)
-
 
 
 
