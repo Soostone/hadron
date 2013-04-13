@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns              #-}
 {-# LANGUAGE FlexibleContexts          #-}
 {-# LANGUAGE FlexibleInstances         #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
@@ -13,6 +14,7 @@ module Hadoop.Streaming
     , Value (..)
     , Mapper
     , Reducer
+    , Finalizer
 
 
     -- * Hadoop Utilities
@@ -22,13 +24,16 @@ module Hadoop.Streaming
 
      -- * MapReduce Construction
     , MROptions (..)
-    , mapReduceMain
-    , mapReduce
+    -- , mapReduceMain
+    -- , mapReduce
 
     , mapper
     , mapperWith
 
     , reducer
+    , noopFin
+
+
 
     -- * Serialization of Haskell Types
     , ser
@@ -136,11 +141,13 @@ mapReduce
     => MROptions a
     -> Mapper m a
     -> Reducer m a b
+    -> b
+    -> Finalizer m b
     -> (m (), m ())
-mapReduce mro f g = (mp, rd)
+mapReduce mro f g a0 z = (mp, rd)
     where
       mp = mapperWith (mroPrism mro) f
-      rd = reducer mro g >> return ()
+      rd = reducer mro g a0 z
 
 
 
@@ -173,11 +180,17 @@ mapper f = do
 
 
 type CompositeKey = [B.ByteString]
+type Mapper m a     = Conduit B.ByteString m ([Key], a)
+type Reducer m a b  = Consumer ([Key], a) m b
 
-type Mapper m a     = Conduit B.ByteString m (CompositeKey, a)
+-- | It is up to you to call 'emitOutput' as part of this function to
+-- actually emit results.
+type Finalizer m b  = [Key] -> b -> Producer m b
 
-type Reducer m a b  = Sink (CompositeKey, a) m b
 
+-- | A no-op finalizer.
+noopFin :: Monad m => Finalizer m a
+noopFin _ _ = return ()
 
 
 -- | Use this whenever you want to emit a line to the output as part
@@ -211,17 +224,51 @@ reducer
     :: (MonadIO m, MonadThrow m)
     => MROptions b
     -> Reducer m b a
-    -> m a
-reducer MROptions{..} sink  = do
+    -- ^ A step function for the given key.
+    -> Finalizer m a
+    -- ^ What to do with the final state for a given key.
+    -> Conduit (CompositeKey, b) m a
+reducer MROptions{..} f fin = do
     liftIO $ hSetBuffering stderr LineBuffering
     liftIO $ hSetBuffering stdout LineBuffering
     liftIO $ hSetBuffering stdin LineBuffering
     stream
     where
-      -- f' k !a' v =
-      --   case firstOf mroPrism v of
-      --     Nothing -> return a'
-      --     Just v' -> f k a' v'
+      go2 = do
+        next <- await
+        case next of
+          Nothing -> return ()
+          Just x -> do
+            leftover x
+            block
+            go2
+
+      block = sameKey Nothing =$= procKey
+
+
+      procKey = do
+          next <- await
+          case next of
+            Nothing -> return ()
+            Just x@(k,v) -> do
+              leftover x
+              !a' <- f
+              fin k a'
+
+
+      sameKey cur = do
+          next <- await
+          case next of
+            Nothing -> return ()
+            Just x@(k,v) ->
+              case cur of
+                Just curKey -> do
+                  case mroEq curKey k of
+                    True -> yield x >> sameKey cur
+                    False -> leftover x
+                Nothing -> do
+                  yield x
+                  sameKey (Just k)
 
       -- go cur = do
       --     next <- await
@@ -234,14 +281,14 @@ reducer MROptions{..} sink  = do
       --         case cur of
       --           Just (curKey, a) -> do
       --             !a' <- case mroEq curKey k of
-      --               True -> lift $ f' k a v
+      --               True -> lift $ f k a v
       --               False -> do
       --                 -- liftIO $ print $ "finalizing key: " ++ show curKey
       --                 finalize curKey a
-      --                 lift $ f' k a0 v
+      --                 lift $ f k a0 v
       --             go (Just (k, a'))
       --           Nothing -> do
-      --             !a' <- lift $ f' k a0 v
+      --             !a' <- lift $ f k a0 v
       --             go (Just (k, a'))
 
       -- finalize k v = lift $ fin k v
@@ -249,11 +296,11 @@ reducer MROptions{..} sink  = do
 
       log i = liftIO $ emitCounter "reducer" "rows_processed" 10
 
-      stream = sourceHandle stdin $=
-               lineC mroKeySegs $=
-               performEvery 10 log $=
-               C.mapMaybe (_2 (firstOf mroPrism)) $$
-               sink
+      stream = sourceHandle stdin =$=
+               lineC mroKeySegs =$=
+               performEvery 10 log =$=
+               C.mapMaybe (_2 (firstOf mroPrism)) =$=
+               go2
 
 
 
@@ -274,37 +321,39 @@ parseLine = ln <* endOfLine
 -- to run the right phase appropriately.
 --
 -- This is the recommended approach to designing a map-reduce program.
-mapReduceMain
-    :: (MonadIO m, MonadThrow m)
-    => MROptions a
-    -> Mapper m a
-    -> Reducer m a b
-    -> m ()
-mapReduceMain mro f g = liftIO (execParser opts) >>= run
-  where
-    (mp,rd) = mapReduce mro f g
+-- mapReduceMain
+--     :: (MonadIO m, MonadThrow m)
+--     => MROptions a
+--     -> Mapper m a
+--     -> Reducer m a b
+--     -> b
+--     -> Finalizer m b
+--     -> m ()
+-- mapReduceMain mro f g a0 z = liftIO (execParser opts) >>= run
+--   where
+--     (mp,rd) = mapReduce mro f g a0 z
 
-    run Map = mp
-    run Reduce = rd
-
-
-    opts = info (helper <*> commandParse)
-      ( fullDesc
-      <> progDesc "This is a Hadoop Streaming Map/Reduce binary. "
-      <> header "hadoop-streaming - use Haskell as your streaming Hadoop program."
-      )
+--     run Map = mp
+--     run Reduce = rd
 
 
-data Command = Map | Reduce
+--     opts = info (helper <*> commandParse)
+--       ( fullDesc
+--       <> progDesc "This is a Hadoop Streaming Map/Reduce binary. "
+--       <> header "hadoop-streaming - use Haskell as your streaming Hadoop program."
+--       )
 
 
--------------------------------------------------------------------------------
-commandParse = subparser
-    ( command "map" (info (pure Map)
-        ( progDesc "Run mapper." ))
-   <> command "reduce" (info (pure Reduce)
-        ( progDesc "Run reducer" ))
-    )
+-- data Command = Map | Reduce
+
+
+-- -------------------------------------------------------------------------------
+-- commandParse = subparser
+--     ( command "map" (info (pure Map)
+--         ( progDesc "Run mapper." ))
+--    <> command "reduce" (info (pure Reduce)
+--         ( progDesc "Run reducer" ))
+--     )
 
 
 

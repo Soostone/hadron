@@ -95,7 +95,9 @@ makeLenses ''ContState
 
 
 data ConI a where
-    Connect :: forall m i o. MapReduce i m o -> [DataDef m i] -> DataDef m o -> ConI ()
+    Connect :: forall m i o. MapReduce i m o
+            -> [DataDef m i] -> DataDef m o
+            -> ConI ()
 
 
 -- | All MapReduce steps are integrated in the 'Controller' monad.
@@ -139,7 +141,8 @@ orchestrate (Controller p) set s = evalStateT (runEitherT (go p)) s
           where
             go' = do
                 mrKey <- newMRKey
-                launchMapReduce set mrKey (mrSettings (map location inp) (location outp))
+                launchMapReduce set mrKey
+                  (mrSettings (map location inp) (location outp))
 
 
 
