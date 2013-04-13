@@ -34,8 +34,10 @@ module Hadoop.Streaming
 
     -- * Serialization Helpers
     , Protocol (..)
+    , Protocol'
     , prismToProtocol
 
+    , linesProtocol
     , serProtocol
     , showProtocol
 
@@ -49,12 +51,14 @@ module Hadoop.Streaming
     , linesConduit
     , lineC
     , mkKey
+
     ) where
 
 
 -------------------------------------------------------------------------------
 import           Control.Applicative
 import           Control.Arrow
+import           Control.Category
 import           Control.Lens
 import           Control.Monad
 import           Control.Monad.Trans
@@ -71,6 +75,7 @@ import           Data.Default
 import qualified Data.Map                         as M
 import qualified Data.Serialize                   as Ser
 import           Options.Applicative              hiding (Parser)
+import           Prelude                          hiding (id, (.))
 import           Safe
 import           System.IO
 -------------------------------------------------------------------------------
@@ -312,14 +317,29 @@ reducer MROptions{..} f = do
                               -------------------
 
 
-data Protocol m a = Protocol {
-      protoEnc :: Conduit a m B.ByteString
-    , protoDec :: Conduit B.ByteString m a
+type Protocol' m a = Protocol m B.ByteString a
+
+
+-- | A 'Protocol's is a serialization strategy when we're dealing with
+-- streams of records, allowing for arbitrary data formats, delimiters
+-- and other potential obstructions.
+--
+-- Most of the time we'll be using 'Protocol\''s.
+data Protocol m b a = Protocol {
+      protoEnc :: Conduit a m b
+    , protoDec :: Conduit b m a
     }
 
 
+instance Monad m => Category (Protocol m) where
+    id = Protocol (C.map id) (C.map id)
+    p1 . p2 = Protocol { protoEnc = (protoEnc p1) =$= (protoEnc p2)
+                       , protoDec = (protoDec p2) =$= (protoDec p1) }
+
+
+
 -- | Lift 'Prism' to work with a newline-separated stream of objects.
-prismToProtocol :: MonadThrow m => Prism' B.ByteString a -> Protocol m a
+prismToProtocol :: MonadThrow m => Prism' B.ByteString a -> Protocol' m a
 prismToProtocol p =
     Protocol { protoEnc = C.mapMaybe (firstOf (re p)) =$=
                           C.map (\x -> B.concat [x, "\n"])
@@ -328,10 +348,16 @@ prismToProtocol p =
                           C.mapMaybe (firstOf p) }
 
 
+-- | A simple serialization strategy that works on lines of strings.
+linesProtocol :: MonadThrow m => Protocol' m B.ByteString
+linesProtocol = Protocol { protoEnc = C.map (\x -> B.concat [x, "\n"])
+                         , protoDec = linesConduit }
+
+
 -------------------------------------------------------------------------------
 -- | Channel the 'Serialize' instance through 'Base64' encoding to
 -- make it newline-safe, then turn into newline-separated stream.
-serProtocol :: (MonadThrow m, Ser.Serialize a) => Protocol m a
+serProtocol :: (MonadThrow m, Ser.Serialize a) => Protocol' m a
 serProtocol = prismToProtocol pSerialize
 
 
@@ -342,7 +368,7 @@ serProtocol = prismToProtocol pSerialize
 --
 -- This is meant for debugging more than anything. Do not use it in
 -- serious matters. Use 'serProtocol' instead.
-showProtocol :: (MonadThrow m, Read a, Show a) => Protocol m a
+showProtocol :: (MonadThrow m, Read a, Show a) => Protocol' m a
 showProtocol = prismToProtocol pShow
 
 

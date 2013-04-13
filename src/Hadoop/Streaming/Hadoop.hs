@@ -1,4 +1,7 @@
-{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards   #-}
+{-# LANGUAGE TemplateHaskell   #-}
+
 -----------------------------------------------------------------------------
 -- |
 -- Module      :
@@ -16,14 +19,17 @@ module Hadoop.Streaming.Hadoop where
 
 -------------------------------------------------------------------------------
 import           Control.Error
+import           Control.Monad.Logger
 import           Control.Monad.Trans
 import           Data.Default
 import           Data.List
+import qualified Data.Text               as T
 import           System.Environment
 import           System.Exit
 import           System.Process
 -------------------------------------------------------------------------------
-
+import           Hadoop.Streaming.Logger
+-------------------------------------------------------------------------------
 
 
 data HadoopSettings = HadoopSettings {
@@ -81,7 +87,7 @@ type MapReduceKey = String
 
 -------------------------------------------------------------------------------
 launchMapReduce
-    :: MonadIO m
+    :: (MonadIO m, MonadLogger m)
     => HadoopSettings
     -> MapReduceKey
     -> MRSettings
@@ -89,12 +95,20 @@ launchMapReduce
 launchMapReduce HadoopSettings{..} mrKey MRSettings{..} = do
     exec <- scriptIO getExecutablePath
     prog <- scriptIO getProgName
-    (code, out, err) <- scriptIO $ readProcessWithExitCode hsBin (args exec prog) ""
+    lift $ $(logInfo) $ T.concat ["Launching Hadoop job for MR key: ", T.pack mrKey]
+
+    let args = mkArgs exec prog
+
+    lift $ $(logInfo) $ T.concat ["Hadoop arguments: ", T.pack (intercalate " " args)]
+
+    (code, out, err) <- scriptIO $ readProcessWithExitCode hsBin args ""
     case code of
       ExitSuccess -> return ()
-      err -> hoistEither $ Left $ "MR job failed with: " ++ show err
+      e -> do
+        lift $ $(logError) $ T.intercalate "\n" ["Hadoop job failed.", "StdOut:", T.pack out, "", "StdErr:", T.pack err]
+        hoistEither $ Left $ "MR job failed with: " ++ show e
     where
-      args exec prog =
+      mkArgs exec prog =
             [ "jar", hsJar
             , "-output", mrsOutput
             , "-mapper", "\"" ++ prog ++ " map_" ++ mrKey ++ "\""

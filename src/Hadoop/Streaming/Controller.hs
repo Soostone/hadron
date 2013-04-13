@@ -35,6 +35,8 @@ module Hadoop.Streaming.Controller
     -- * Hadoop Program Construction
     , Controller
     , MapReduce (..)
+    , DataDef (..)
+    , ddef
     , connect
 
     ) where
@@ -44,6 +46,7 @@ import           Control.Applicative
 import           Control.Concurrent
 import           Control.Error
 import           Control.Lens
+import           Control.Monad.Logger
 import           Control.Monad.Operational as O
 import           Control.Monad.State
 import           Control.Monad.Trans
@@ -57,6 +60,7 @@ import           System.Environment
 -------------------------------------------------------------------------------
 import           Hadoop.Streaming
 import           Hadoop.Streaming.Hadoop
+import           Hadoop.Streaming.Logger
 -------------------------------------------------------------------------------
 
 
@@ -64,9 +68,9 @@ import           Hadoop.Streaming.Hadoop
 -------------------------------------------------------------------------------
 -- | A packaged MapReduce step
 data MapReduce a m b = forall v. MapReduce {
-      mrMapper  :: Mapper a m v
+      mrOptions :: MROptions v
+    , mrMapper  :: Mapper a m v
     , mrReducer :: Reducer v m b
-    , mrOptions :: MROptions v
     }
 
 
@@ -77,12 +81,12 @@ type Location = String
 -- serialize/deserialize.
 data DataDef m a = DataDef
     { location :: Location
-    , proto    :: Protocol m a
+    , proto    :: Protocol' m a
     }
 
 
 -- | Construct a 'DataDef'
-ddef :: Location -> Protocol m a -> DataDef m a
+ddef :: Location -> Protocol' m a -> DataDef m a
 ddef = DataDef
 
 
@@ -128,7 +132,7 @@ newMRKey = do
 -------------------------------------------------------------------------------
 -- | Interpreter for the central job control process
 orchestrate
-    :: MonadIO m
+    :: (MonadIO m, MonadLogger m)
     => Controller a
     -> HadoopSettings
     -> ContState
@@ -140,7 +144,7 @@ orchestrate (Controller p) set s = evalStateT (runEitherT (go p)) s
       eval (Return a) = return a
       eval (i :>>= f) = eval' i >>= go . f
 
-      eval' :: MonadIO m => ConI a -> EitherT String (StateT ContState m) a
+      eval' :: (MonadLogger m, MonadIO m) => ConI a -> EitherT String (StateT ContState m) a
       eval' (Connect mr inp outp) = go'
           where
             go' = do
@@ -157,7 +161,7 @@ data Phase = Map | Reduce
 -- | The main entry point. Use this function to produce a command line
 -- program that encapsulates everything.
 hadoopMain
-    :: forall m a. (MonadThrow m, MonadIO m)
+    :: forall m a. (MonadThrow m, MonadIO m, MonadLogger m)
     => Controller a
     -> HadoopSettings
     -> m ()
@@ -178,12 +182,12 @@ hadoopMain c@(Controller p) hs = do
 
 
       go :: String -> ConI b -> StateT ContState m b
-      go arg (Connect (MapReduce mp rd mro@MROptions{..}) inp outp) = do
+      go arg (Connect (MapReduce mro mp rd ) inp outp) = do
           mrKey <- newMRKey
           case find ((== arg) . snd) $ mkArgs mrKey of
             Just (Map, _) -> do
               let inSer = proto $ head inp
-              liftIO $ (mapperWith mroPrism $ protoDec inSer =$= mp)
+              liftIO $ (mapperWith (mroPrism mro) $ protoDec inSer =$= mp)
             Just (Reduce, _) -> do
               liftIO $ (reducerMain mro rd (protoEnc $ proto outp))
             Nothing -> return ()
