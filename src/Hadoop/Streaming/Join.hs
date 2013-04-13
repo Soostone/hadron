@@ -3,11 +3,19 @@
 {-# LANGUAGE RecordWildCards   #-}
 
 module Hadoop.Streaming.Join
-    ( joinMain
-    , DataDefs
+    (
+
+      DataDefs
     , DataSet
     , JoinType (..)
     , JoinKey
+
+
+    , joinMain
+    , joinMapper
+    , joinReducer
+    , joinOpts
+
     ) where
 
 -------------------------------------------------------------------------------
@@ -188,6 +196,24 @@ joinReduceStep fs buf@Buffering{..} (k, x) =
 joinReduceStep _ str@Streaming{} (k,x) = emitStream str x >> return str
 
 
+-- | Helper for easy construction of specialized join mapper.
+--
+-- This mapper identifies the active dataset from the currently
+-- streaming filename and uses filename to determine how the mapping
+-- shoudl be done.
+joinMapper
+    :: MonadIO m
+    => (String -> DataSet)
+    -> (DataSet -> Conduit a m (JoinKey, r))
+    -> Mapper a m r
+joinMapper getDS mkMap = do
+    fi <- liftIO $ getEnv "map_input_file"
+    let ds = getDS fi
+    mkMap ds =$= C.map (go ds)
+  where
+    go ds (jk, a) = ([jk, ds], a)
+
+
 
                            ------------------------
                            -- A Main Application --
@@ -210,11 +236,6 @@ joinMain
 joinMain fs getDS mkMap out = mapReduceMain joinOpts mp rd out
     where
 
-      mp = do
-          fi <- liftIO $ getEnv "map_input_file"
-          let ds = getDS fi
-          mkMap ds =$= C.map (go ds)
-
-      go ds (jk, a) = ([jk, ds], a)
+      mp = joinMapper getDS mkMap
 
       rd = joinReducer fs

@@ -39,6 +39,11 @@ module Hadoop.Streaming.Controller
     , DataDef (..)
     , ddef
 
+
+    -- * Buil-in Map-Reduce applications
+
+    , joinStep
+
     -- * Control flow operations
 
     , connect
@@ -60,11 +65,14 @@ import           Data.Default
 import qualified Data.HashMap.Strict       as HM
 import           Data.List
 import qualified Data.Map                  as M
+import           Data.Monoid
+import           Data.Serialize
 import qualified Data.Text                 as T
 import           System.Environment
 -------------------------------------------------------------------------------
 import           Hadoop.Streaming
 import           Hadoop.Streaming.Hadoop
+import           Hadoop.Streaming.Join
 import           Hadoop.Streaming.Logger
 -------------------------------------------------------------------------------
 
@@ -218,3 +226,25 @@ hadoopMain c@(Controller p) hs = do
             Nothing -> return ()
 
 
+
+
+
+-------------------------------------------------------------------------------
+-- | A convenient way to express multi-way join operations into a
+-- single data type.
+joinStep
+    :: (Show b, MonadThrow m, Monoid b, MonadIO m,
+        Serialize b)
+    => [(DataSet, JoinType)]
+    -- ^ Dataset definitions
+    -> (String -> DataSet)
+    -- ^ A function to identify current dataset from input filename
+    -> (DataSet -> Conduit a m (JoinKey, b))
+    -- ^ A custom function for each dataset, mapping its data to a
+    -- uniform record format 'b' that we know how to 'mconcat'
+    -- together.
+    -> MapReduce a m b
+joinStep fs getDS mkMap = MapReduce joinOpts mp rd
+    where
+      mp = joinMapper getDS mkMap
+      rd = joinReducer fs
