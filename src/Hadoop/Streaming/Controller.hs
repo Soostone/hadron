@@ -7,6 +7,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE NoMonomorphismRestriction  #-}
+{-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE RankNTypes                 #-}
 {-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
@@ -46,7 +47,6 @@ import           Control.Applicative
 import           Control.Concurrent
 import           Control.Error
 import           Control.Lens
-import           Control.Monad.Logger
 import           Control.Monad.Operational as O
 import           Control.Monad.State
 import           Control.Monad.Trans
@@ -56,6 +56,7 @@ import           Data.Default
 import qualified Data.HashMap.Strict       as HM
 import           Data.List
 import qualified Data.Map                  as M
+import qualified Data.Text                 as T
 import           System.Environment
 -------------------------------------------------------------------------------
 import           Hadoop.Streaming
@@ -187,9 +188,13 @@ hadoopMain c@(Controller p) hs = do
           case find ((== arg) . snd) $ mkArgs mrKey of
             Just (Map, _) -> do
               let inSer = proto $ head inp
+              lift $ $(logInfo) $ T.concat ["Mapper ", T.pack mrKey, " initializing."]
               liftIO $ (mapperWith (mroPrism mro) $ protoDec inSer =$= mp)
+              lift $ $(logInfo) $ T.concat ["Mapper ", T.pack mrKey, " finished."]
             Just (Reduce, _) -> do
+              lift $ $(logInfo) $ T.concat ["Reducer ", T.pack mrKey, " initializing."]
               liftIO $ (reducerMain mro rd (protoEnc $ proto outp))
+              lift $ $(logInfo) $ T.concat ["Reducer ", T.pack mrKey, " finished."]
             Nothing -> return ()
 
 
