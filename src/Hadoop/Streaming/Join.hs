@@ -104,7 +104,7 @@ emitStream Streaming{..} a = V.mapM_ (yield . mappend a) strStems
 
 -------------------------------------------------------------------------------
 joinOpts :: Serialize a => MROptions a
-joinOpts = MROptions eq 2 ser
+joinOpts = MROptions eq 2 pSerialize
     where
       eq [a1,a2] [b1,b2] = a1 == b1
 
@@ -195,12 +195,18 @@ joinReduceStep _ str@Streaming{} (k,x) = emitStream str x >> return str
 
 
 -------------------------------------------------------------------------------
-joinMain :: (MonadIO m, Serialize r, Monoid r, MonadThrow m, Show r)
-         => DataDefs
-         -> (String -> DataSet)
-         -> (DataSet -> Conduit B.ByteString m (JoinKey, r))
-         -> Conduit r m B.ByteString
-         -> m ()
+joinMain
+    :: (MonadIO m, Serialize r, Monoid r, MonadThrow m, Show r)
+    => DataDefs
+    -- ^ Define your tables
+    -> (String -> DataSet)
+    -- ^ Infer dataset from input filename
+    -> (DataSet -> Conduit B.ByteString m (JoinKey, r))
+    -- ^ Map input stream to a join key and the common-denominator
+    -- uniform data type we know how to 'mconcat'.
+    -> Conduit r m B.ByteString
+    -- ^ Choose serialization method for final output.
+    -> m ()
 joinMain fs getDS mkMap out = mapReduceMain joinOpts mp rd out
     where
 

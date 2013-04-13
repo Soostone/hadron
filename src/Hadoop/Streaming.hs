@@ -39,9 +39,13 @@ module Hadoop.Streaming
     -- * Serialization of Haskell Types
     , Protocol (..)
     , prismToProtocol
-    , serProtocol
 
-    , ser
+    , serProtocol
+    , showProtocol
+
+    , pSerialize
+    , pShow
+
     , serialize
     , deserialize
 
@@ -71,6 +75,7 @@ import           Data.Default
 import qualified Data.Map                         as M
 import qualified Data.Serialize                   as Ser
 import           Options.Applicative              hiding (Parser)
+import           Safe
 import           System.IO
 -------------------------------------------------------------------------------
 
@@ -309,7 +314,12 @@ prismToProtocol p =
 
 -------------------------------------------------------------------------------
 serProtocol :: (Monad m, Ser.Serialize a) => Protocol m a
-serProtocol = prismToProtocol ser
+serProtocol = prismToProtocol pSerialize
+
+
+-------------------------------------------------------------------------------
+showProtocol :: (Monad m, Read a, Show a) => Protocol m a
+showProtocol = prismToProtocol pShow
 
 
 -- | Helper for reliable serialization
@@ -322,9 +332,16 @@ deserialize :: Ser.Serialize c => B.ByteString -> Either String c
 deserialize = Ser.decode <=< Base64.decode
 
 
-ser :: Ser.Serialize a => Prism' B.ByteString a
-ser = prism serialize (\x -> either (const $ Left x) Right $ deserialize x)
+-- | Serialize with the 'Serialize' instance
+pSerialize :: Ser.Serialize a => Prism' B.ByteString a
+pSerialize = prism serialize (\x -> either (const $ Left x) Right $ deserialize x)
 
+
+-- | Serialize with the Show/Read instances
+pShow :: (Show a, Read a) => Prism' B.ByteString a
+pShow = prism
+          (B.pack . show)
+          (\x -> maybe (Left x) Right . readMay . B.unpack $ x)
 
 
                               ------------------
