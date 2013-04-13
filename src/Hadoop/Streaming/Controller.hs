@@ -13,6 +13,20 @@
 {-# LANGUAGE TemplateHaskell            #-}
 {-# LANGUAGE UndecidableInstances       #-}
 
+-----------------------------------------------------------------------------
+-- |
+-- Module      :  Hadoop.Streaming.Controller
+-- Copyright   :  Soostone Inc
+-- License     :  BSD3
+--
+-- Maintainer  :  Ozgun Ataman
+-- Stability   :  experimental
+--
+-- High level flow-control of Hadoop programs with ability to define a
+-- sequence of Map-Reduce operations in a Monad, have strongly typed
+-- data locations.
+----------------------------------------------------------------------------
+
 module Hadoop.Streaming.Controller
     (
     -- * Command Line Entry Point
@@ -22,7 +36,6 @@ module Hadoop.Streaming.Controller
     , Controller
     , MapReduce (..)
     , connect
-
 
     ) where
 

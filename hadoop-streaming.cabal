@@ -13,6 +13,7 @@ library
   exposed-modules:     
     Hadoop.Streaming
     Hadoop.Streaming.Join
+    Hadoop.Streaming.Hadoop
     Hadoop.Streaming.Controller
 
   build-depends:       
