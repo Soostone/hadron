@@ -185,7 +185,7 @@ type Reducer m a b  = [Key] -> b -> a -> m b
 
 -- | It is up to you to call 'emitOutput' as part of this function to
 -- actually emit results.
-type Finalizer m a  = [Key] -> a -> m ()
+type Finalizer m b  = [Key] -> b -> m ()
 
 
 -- | A no-op finalizer.
