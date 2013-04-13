@@ -1,4 +1,3 @@
-{-# LANGUAGE BangPatterns              #-}
 {-# LANGUAGE FlexibleContexts          #-}
 {-# LANGUAGE FlexibleInstances         #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
@@ -14,7 +13,6 @@ module Hadoop.Streaming
     , Value (..)
     , Mapper
     , Reducer
-    , Finalizer
 
 
     -- * Hadoop Utilities
@@ -31,9 +29,6 @@ module Hadoop.Streaming
     , mapperWith
 
     , reducer
-    , noopFin
-
-
 
     -- * Serialization of Haskell Types
     , ser
@@ -141,13 +136,11 @@ mapReduce
     => MROptions a
     -> Mapper m a
     -> Reducer m a b
-    -> b
-    -> Finalizer m b
     -> (m (), m ())
-mapReduce mro f g a0 z = (mp, rd)
+mapReduce mro f g = (mp, rd)
     where
       mp = mapperWith (mroPrism mro) f
-      rd = reducer mro g a0 z
+      rd = reducer mro g >> return ()
 
 
 
@@ -179,18 +172,12 @@ mapper f = do
       log i = liftIO $ emitCounter "mapper" "rows_emitted" 10
 
 
+type CompositeKey = [B.ByteString]
 
-type Mapper m a     = Conduit B.ByteString m ([Key], a)
-type Reducer m a b  = [Key] -> b -> a -> m b
+type Mapper m a     = Conduit B.ByteString m (CompositeKey, a)
 
--- | It is up to you to call 'emitOutput' as part of this function to
--- actually emit results.
-type Finalizer m b  = [Key] -> b -> m ()
+type Reducer m a b  = Sink (CompositeKey, a) m b
 
-
--- | A no-op finalizer.
-noopFin :: Monad m => Finalizer m a
-noopFin _ _ = return ()
 
 
 -- | Use this whenever you want to emit a line to the output as part
@@ -224,53 +211,49 @@ reducer
     :: (MonadIO m, MonadThrow m)
     => MROptions b
     -> Reducer m b a
-    -- ^ A step function for the given key.
-    -> a
-    -- ^ Inital state.
-    -> Finalizer m a
-    -- ^ What to do with the final state for a given key.
-    -> m ()
-reducer MROptions{..} f a0 fin = do
+    -> m a
+reducer MROptions{..} sink  = do
     liftIO $ hSetBuffering stderr LineBuffering
     liftIO $ hSetBuffering stdout LineBuffering
     liftIO $ hSetBuffering stdin LineBuffering
     stream
     where
-      f' k !a' v =
-        case firstOf mroPrism v of
-          Nothing -> return a'
-          Just v' -> f k a' v'
+      -- f' k !a' v =
+      --   case firstOf mroPrism v of
+      --     Nothing -> return a'
+      --     Just v' -> f k a' v'
 
-      go cur = do
-          next <- await
-          case next of
-            Nothing ->
-              case cur of
-                Just (curKey, a) -> finalize curKey a
-                Nothing -> return ()
-            Just (k,v) ->
-              case cur of
-                Just (curKey, a) -> do
-                  !a' <- case mroEq curKey k of
-                    True -> lift $ f' k a v
-                    False -> do
-                      -- liftIO $ print $ "finalizing key: " ++ show curKey
-                      finalize curKey a
-                      lift $ f' k a0 v
-                  go (Just (k, a'))
-                Nothing -> do
-                  !a' <- lift $ f' k a0 v
-                  go (Just (k, a'))
+      -- go cur = do
+      --     next <- await
+      --     case next of
+      --       Nothing ->
+      --         case cur of
+      --           Just (curKey, a) -> finalize curKey a
+      --           Nothing -> return ()
+      --       Just (k,v) ->
+      --         case cur of
+      --           Just (curKey, a) -> do
+      --             !a' <- case mroEq curKey k of
+      --               True -> lift $ f' k a v
+      --               False -> do
+      --                 -- liftIO $ print $ "finalizing key: " ++ show curKey
+      --                 finalize curKey a
+      --                 lift $ f' k a0 v
+      --             go (Just (k, a'))
+      --           Nothing -> do
+      --             !a' <- lift $ f' k a0 v
+      --             go (Just (k, a'))
 
-      finalize k v = lift $ fin k v
+      -- finalize k v = lift $ fin k v
 
 
       log i = liftIO $ emitCounter "reducer" "rows_processed" 10
 
       stream = sourceHandle stdin $=
                lineC mroKeySegs $=
-               performEvery 10 log $$
-               go Nothing
+               performEvery 10 log $=
+               C.mapMaybe (_2 (firstOf mroPrism)) $$
+               sink
 
 
 
@@ -296,12 +279,10 @@ mapReduceMain
     => MROptions a
     -> Mapper m a
     -> Reducer m a b
-    -> b
-    -> Finalizer m b
     -> m ()
-mapReduceMain mro f g a0 z = liftIO (execParser opts) >>= run
+mapReduceMain mro f g = liftIO (execParser opts) >>= run
   where
-    (mp,rd) = mapReduce mro f g a0 z
+    (mp,rd) = mapReduce mro f g
 
     run Map = mp
     run Reduce = rd
