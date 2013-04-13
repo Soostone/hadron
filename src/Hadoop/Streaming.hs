@@ -180,6 +180,11 @@ mapper f = do
 
 
 type CompositeKey   = [B.ByteString]
+
+
+-------------------------------------------------------------------------------
+-- | A 'Mapper' parses and converts the unbounded incoming stream of
+-- input into a stream of (key, value) pairs.
 type Mapper m a     = Conduit B.ByteString m ([Key], a)
 
 
@@ -198,15 +203,21 @@ instance Default (MROptions B.ByteString) where
     def = MROptions (==) 1 id
 
 
+-------------------------------------------------------------------------------
+-- | A reducer takes an incoming stream of (key, value) pairs and
+-- emits zero or more output objects of type 'r'.
+--
+-- Note that this framework guarantees your reducer function (i.e. the
+-- conduit you supply here) will see ONLY keys that are deemed
+-- 'equivalent' based on the 'MROptions' you supply. Different keys
+-- will be given to individual and isolated invocations of your
+-- reducer function. This is pretty much the key abstraction provided
+-- by this framework.
 type Reducer a m r  = Conduit (CompositeKey, a) m r
 
 
 -- | An easy way to construct a reducer pogram. Just supply the
 -- arguments and you're done.
---
--- m : Monad
--- b : Incoming stream type
--- a : Accumulator type
 reducer
     :: (MonadIO m, MonadThrow m)
     => MROptions a

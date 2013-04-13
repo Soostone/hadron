@@ -10,9 +10,9 @@ import           Data.Conduit
 import qualified Data.Conduit.List     as C
 import           Data.CSV.Conduit
 import           Data.Default
+-------------------------------------------------------------------------------
 import           Hadoop.Streaming
 -------------------------------------------------------------------------------
-
 
 main :: IO ()
 main = mapReduceMain mro mapper' reducer' (fromCSV def)
