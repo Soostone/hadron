@@ -96,8 +96,7 @@ bufToStr _ _ = error "bufToStr can only convert a Buffering to a Streaming"
 
 
 -- | Given a new row in the final dataset of the joinset, emit all the
--- joined rows immediately. Given function is responsible for calling
--- 'emitOutput'.
+-- joined rows immediately.
 emitStream :: (Monad m, Monoid b) => JoinAcc b -> b -> ConduitM i b m ()
 emitStream Streaming{..} a = V.mapM_ (yield . mappend a) strStems
 

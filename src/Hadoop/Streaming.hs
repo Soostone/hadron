@@ -15,28 +15,23 @@ module Hadoop.Streaming
     , Value (..)
     , Mapper
     , Reducer
-    , Finalizer
 
 
     -- * Hadoop Utilities
     , emitCounter
     , emitStatus
-    , emitOutput
 
      -- * MapReduce Construction
     , MROptions (..)
     , mapReduceMain
     , mapReduce
 
+    -- * Low-level Utilities
     , mapper
     , mapperWith
-
     , reducer
-    , noopFin
 
-
-
-    -- * Serialization of Haskell Types
+    -- * Serialization Helpers
     , Protocol (..)
     , prismToProtocol
 
@@ -114,6 +109,11 @@ type Key = B.ByteString
 type Value = B.ByteString
 
 
+parseLine :: Parser B.ByteString
+parseLine = ln <* endOfLine
+    where
+      ln = takeTill (== '\n')
+
 -- | Turn incoming stream into a stream of lines
 linesConduit :: MonadThrow m => Conduit B.ByteString m B.ByteString
 linesConduit = conduitParser parseLine =$= C.map snd
@@ -146,6 +146,10 @@ mapReduce mro f g out = (mp, rd)
       rd = reducer mro g $= out $= C.mapM_ emitOutput $$ C.sinkNull
 
 
+-- | Use this whenever you want to emit a line to the output as part
+-- of the current stage, whether your mapping or reducing.
+emitOutput :: MonadIO m => B.ByteString -> m ()
+emitOutput bs = liftIO $ B.hPutStr stdout bs
 
 
 -- | Construct a mapper program using given serialization Prism.
@@ -177,21 +181,6 @@ mapper f = do
 
 type CompositeKey   = [B.ByteString]
 type Mapper m a     = Conduit B.ByteString m ([Key], a)
-
--- | It is up to you to call 'emitOutput' as part of this function to
--- actually emit results.
-type Finalizer m b  = [Key] -> b -> Producer m b
-
-
--- | A no-op finalizer.
-noopFin :: Monad m => Finalizer m a
-noopFin _ _ = return ()
-
-
--- | Use this whenever you want to emit a line to the output as part
--- of the current stage, whether your mapping or reducing.
-emitOutput :: MonadIO m => B.ByteString -> m ()
-emitOutput bs = liftIO $ B.hPutStrLn stdout bs
 
 
 data MROptions a = MROptions {
@@ -289,12 +278,6 @@ reducer MROptions{..} f = do
 
 
 
-parseLine :: Parser B.ByteString
-parseLine = ln <* endOfLine
-    where
-      ln = takeTill (== '\n')
-
-
                               -------------------
                               -- Serialization --
                               -------------------
@@ -306,19 +289,31 @@ data Protocol m a = Protocol {
     }
 
 
-prismToProtocol :: Monad m => Prism' B.ByteString a -> Protocol m a
+-- | Lift 'Prism' to work with a newline-separated stream of objects.
+prismToProtocol :: MonadThrow m => Prism' B.ByteString a -> Protocol m a
 prismToProtocol p =
-    Protocol { protoEnc = C.mapMaybe (firstOf (re p))
-             , protoDec = C.mapMaybe (firstOf p) }
+    Protocol { protoEnc = C.mapMaybe (firstOf (re p)) =$=
+                          C.map (\x -> B.concat [x, "\n"])
+
+             , protoDec = linesConduit =$=
+                          C.mapMaybe (firstOf p) }
 
 
 -------------------------------------------------------------------------------
-serProtocol :: (Monad m, Ser.Serialize a) => Protocol m a
+-- | Channel the 'Serialize' instance through 'Base64' encoding to
+-- make it newline-safe, then turn into newline-separated stream.
+serProtocol :: (MonadThrow m, Ser.Serialize a) => Protocol m a
 serProtocol = prismToProtocol pSerialize
 
 
 -------------------------------------------------------------------------------
-showProtocol :: (Monad m, Read a, Show a) => Protocol m a
+-- | Use 'Show'/'Read' instances to stream-serialize. You must be
+-- careful not to have any newline characters inside, or the stream
+-- will get confused.
+--
+-- This is meant for debugging more than anything. Do not use it in
+-- serious matters. Use 'serProtocol' instead.
+showProtocol :: (MonadThrow m, Read a, Show a) => Protocol m a
 showProtocol = prismToProtocol pShow
 
 
