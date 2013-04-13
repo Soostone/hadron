@@ -1,4 +1,4 @@
-{-# LANGUAGE BangPatterns              #-}
+{-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts          #-}
 {-# LANGUAGE FlexibleInstances         #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
@@ -11,6 +11,7 @@ module Hadoop.Streaming
       -- * Types
 
       Key (..)
+    , CompositeKey
     , Value (..)
     , Mapper
     , Reducer
@@ -24,8 +25,8 @@ module Hadoop.Streaming
 
      -- * MapReduce Construction
     , MROptions (..)
-    -- , mapReduceMain
-    -- , mapReduce
+    , mapReduceMain
+    , mapReduce
 
     , mapper
     , mapperWith
@@ -36,6 +37,10 @@ module Hadoop.Streaming
 
 
     -- * Serialization of Haskell Types
+    , Protocol (..)
+    , prismToProtocol
+    , serProtocol
+
     , ser
     , serialize
     , deserialize
@@ -68,20 +73,6 @@ import qualified Data.Serialize                   as Ser
 import           Options.Applicative              hiding (Parser)
 import           System.IO
 -------------------------------------------------------------------------------
-
-
--- | Helper for reliable serialization
-serialize :: Ser.Serialize a => a -> B.ByteString
-serialize = Base64.encode . Ser.encode
-
-
--- | Helper for reliable deserialization
-deserialize :: Ser.Serialize c => B.ByteString -> Either String c
-deserialize = Ser.decode <=< Base64.decode
-
-
-ser :: Ser.Serialize a => Prism' B.ByteString a
-ser = prism serialize (\x -> either (const $ Left x) Right $ deserialize x)
 
 
 -- | Useful when making a key from multiple pieces of data
@@ -140,14 +131,14 @@ mapReduce
     :: (MonadIO m, MonadThrow m)
     => MROptions a
     -> Mapper m a
-    -> Reducer m a b
-    -> b
-    -> Finalizer m b
+    -> Reducer a m b
+    -> Conduit b m B.ByteString
+    -- ^ A final output serializer
     -> (m (), m ())
-mapReduce mro f g a0 z = (mp, rd)
+mapReduce mro f g out = (mp, rd)
     where
       mp = mapperWith (mroPrism mro) f
-      rd = reducer mro g a0 z
+      rd = reducer mro g $= out $= C.mapM_ emitOutput $$ C.sinkNull
 
 
 
@@ -179,9 +170,8 @@ mapper f = do
       log i = liftIO $ emitCounter "mapper" "rows_emitted" 10
 
 
-type CompositeKey = [B.ByteString]
+type CompositeKey   = [B.ByteString]
 type Mapper m a     = Conduit B.ByteString m ([Key], a)
-type Reducer m a b  = Consumer ([Key], a) m b
 
 -- | It is up to you to call 'emitOutput' as part of this function to
 -- actually emit results.
@@ -214,6 +204,9 @@ instance Default (MROptions B.ByteString) where
     def = MROptions (==) 1 id
 
 
+type Reducer a m r  = Conduit (CompositeKey, a) m r
+
+
 -- | An easy way to construct a reducer pogram. Just supply the
 -- arguments and you're done.
 --
@@ -222,13 +215,11 @@ instance Default (MROptions B.ByteString) where
 -- a : Accumulator type
 reducer
     :: (MonadIO m, MonadThrow m)
-    => MROptions b
-    -> Reducer m b a
+    => MROptions a
+    -> Reducer a m r
     -- ^ A step function for the given key.
-    -> Finalizer m a
-    -- ^ What to do with the final state for a given key.
-    -> Conduit (CompositeKey, b) m a
-reducer MROptions{..} f fin = do
+    -> Source m r
+reducer MROptions{..} f = do
     liftIO $ hSetBuffering stderr LineBuffering
     liftIO $ hSetBuffering stdout LineBuffering
     liftIO $ hSetBuffering stdin LineBuffering
@@ -243,18 +234,7 @@ reducer MROptions{..} f fin = do
             block
             go2
 
-      block = sameKey Nothing =$= procKey
-
-
-      procKey = do
-          next <- await
-          case next of
-            Nothing -> return ()
-            Just x@(k,v) -> do
-              leftover x
-              !a' <- f
-              fin k a'
-
+      block = sameKey Nothing =$= f
 
       sameKey cur = do
           next <- await
@@ -310,50 +290,88 @@ parseLine = ln <* endOfLine
       ln = takeTill (== '\n')
 
 
+                              -------------------
+                              -- Serialization --
+                              -------------------
+
+
+data Protocol m a = Protocol {
+      protoEnc :: Conduit a m B.ByteString
+    , protoDec :: Conduit B.ByteString m a
+    }
+
+
+prismToProtocol :: Monad m => Prism' B.ByteString a -> Protocol m a
+prismToProtocol p =
+    Protocol { protoEnc = C.mapMaybe (firstOf (re p))
+             , protoDec = C.mapMaybe (firstOf p) }
+
+
+-------------------------------------------------------------------------------
+serProtocol :: (Monad m, Ser.Serialize a) => Protocol m a
+serProtocol = prismToProtocol ser
+
+
+-- | Helper for reliable serialization
+serialize :: Ser.Serialize a => a -> B.ByteString
+serialize = Base64.encode . Ser.encode
+
+
+-- | Helper for reliable deserialization
+deserialize :: Ser.Serialize c => B.ByteString -> Either String c
+deserialize = Ser.decode <=< Base64.decode
+
+
+ser :: Ser.Serialize a => Prism' B.ByteString a
+ser = prism serialize (\x -> either (const $ Left x) Right $ deserialize x)
+
+
+
                               ------------------
                               -- Main Program --
                               ------------------
 
 
 
--------------------------------------------------------------------------------
+
 -- | A default main that will respond to 'map' and 'reduce' commands
 -- to run the right phase appropriately.
 --
 -- This is the recommended approach to designing a map-reduce program.
--- mapReduceMain
---     :: (MonadIO m, MonadThrow m)
---     => MROptions a
---     -> Mapper m a
---     -> Reducer m a b
---     -> b
---     -> Finalizer m b
---     -> m ()
--- mapReduceMain mro f g a0 z = liftIO (execParser opts) >>= run
---   where
---     (mp,rd) = mapReduce mro f g a0 z
+mapReduceMain
+    :: (MonadIO m, MonadThrow m)
+    => MROptions a
+    -> Mapper m a
+    -> Reducer a m r
+    -- ^ Reducer for a stream of values belonging to the same key.
+    -> Conduit r m B.ByteString
+    -- ^ A final serialization function.
+    -> m ()
+mapReduceMain mro f g out = liftIO (execParser opts) >>= run
+  where
+    (mp,rd) = mapReduce mro f g out
 
---     run Map = mp
---     run Reduce = rd
-
-
---     opts = info (helper <*> commandParse)
---       ( fullDesc
---       <> progDesc "This is a Hadoop Streaming Map/Reduce binary. "
---       <> header "hadoop-streaming - use Haskell as your streaming Hadoop program."
---       )
+    run Map = mp
+    run Reduce = rd
 
 
--- data Command = Map | Reduce
+    opts = info (helper <*> commandParse)
+      ( fullDesc
+      <> progDesc "This is a Hadoop Streaming Map/Reduce binary. "
+      <> header "hadoop-streaming - use Haskell as your streaming Hadoop program."
+      )
 
 
--- -------------------------------------------------------------------------------
--- commandParse = subparser
---     ( command "map" (info (pure Map)
---         ( progDesc "Run mapper." ))
---    <> command "reduce" (info (pure Reduce)
---         ( progDesc "Run reducer" ))
---     )
+data Command = Map | Reduce
+
+
+-------------------------------------------------------------------------------
+commandParse = subparser
+    ( command "map" (info (pure Map)
+        ( progDesc "Run mapper." ))
+   <> command "reduce" (info (pure Reduce)
+        ( progDesc "Run reducer" ))
+    )
 
 
 

@@ -2,7 +2,9 @@
 {-# LANGUAGE RankNTypes        #-}
 {-# LANGUAGE RecordWildCards   #-}
 
-module Hadoop.Streaming.Join where
+module Hadoop.Streaming.Join
+    ( joinMain
+    ) where
 
 -------------------------------------------------------------------------------
 import           Control.Lens
@@ -92,8 +94,8 @@ bufToStr _ _ = error "bufToStr can only convert a Buffering to a Streaming"
 -- | Given a new row in the final dataset of the joinset, emit all the
 -- joined rows immediately. Given function is responsible for calling
 -- 'emitOutput'.
-emitStream :: (Monad m, Monoid a) => (a -> m ()) -> JoinAcc a -> a -> m ()
-emitStream f Streaming{..} a = V.mapM_ (f . mappend a) strStems
+emitStream :: (Monad m, Monoid b) => JoinAcc b -> b -> ConduitM i b m ()
+emitStream Streaming{..} a = V.mapM_ (yield . mappend a) strStems
 
 
 -------------------------------------------------------------------------------
@@ -103,51 +105,58 @@ joinOpts = MROptions eq 2 ser
       eq [a1,a2] [b1,b2] = a1 == b1
 
 
-
+-------------------------------------------------------------------------------
+-- | Make join reducer from given table definitions
 joinReducer
-    :: (Show b, Monoid b, MonadIO m, MonadThrow m, Serialize b)
+    :: (Show r, Monoid r, MonadIO m, MonadThrow m, Serialize r)
     => [(DataSet, JoinType)]
     -- ^ Table definitions
-    -> (b -> B.ByteString)
-    -- ^ Convert resulting rows to bytestring
-    -> m ()
-joinReducer fs f = reducer joinOpts step def fin
+    -> Reducer r m r
+joinReducer fs = red def
     where
-      step = joinReduceStep fs f'
-      fin = joinFinalize fs f'
-      f' = emitOutput . f
+      red ja = do
+          next <- await
+          case next of
+            Nothing -> joinFinalize fs ja
+            Just x -> do
+              ja' <- joinReduceStep fs ja x
+              red $! ja'
 
 
--- | Helper to construct a finalizer for join operations.
+-------------------------------------------------------------------------------
 joinFinalize
-    :: (Monad m, Monoid a)
+    :: (Monad m, Monoid b)
     => [(DataSet, JoinType)]
-    -> (a -> m ())
-    -> t
-    -> JoinAcc a
-    -> m ()
+    -> JoinAcc b
+    -> ConduitM i b m ()
+
 
 -- we're still in buffering, so nothing has been emitted yet. one of
 -- the tables (and definitely the last table) did not have any input
 -- at all. we'll try to emit in case the last table is not a required
 -- table.
-joinFinalize fs f _ buf@Buffering{..} =
+--
+-- notice that unlike other calls to bufToStr, we include ALL the
+-- tables here so that if the last table was required, it'll all
+-- collapse to an empty list and nothing will be emitted.
+joinFinalize fs buf@Buffering{} =
   let str = bufToStr fs buf
-  in  emitStream f str mempty
+  in  emitStream str mempty
 
 -- we're already in streaming, so we've been emitting output in
 -- real-time. nothing left to do at this point.
-joinFinalize _ _ _ Streaming{..} = return ()
+joinFinalize _ Streaming{} = return ()
 
 
 -------------------------------------------------------------------------------
 -- | Make a step function for a join operation
 joinReduceStep
-    :: (Monad m, Monoid a, Show a)
+    :: (Monad m, Monoid b)
     => DataDefs
-    -> (a -> m ())
-    -> Reducer m a (JoinAcc a)
-joinReduceStep fs f k buf@Buffering{..} x =
+    -> JoinAcc b
+    -> (CompositeKey, b)
+    -> ConduitM i b m (JoinAcc b)
+joinReduceStep fs buf@Buffering{..} (k, x) =
 
     -- | Accumulate until you start seeing the last table. We'll start
     -- emitting immediately after that.
@@ -156,7 +165,7 @@ joinReduceStep fs f k buf@Buffering{..} x =
                return $! accumulate
       True ->
         let fs' = filter ((/= ds) . fst) fs
-        in joinReduceStep fs f k (bufToStr fs' buf) x
+        in joinReduceStep fs (bufToStr fs' buf) (k,x)
 
     where
 
@@ -167,22 +176,12 @@ joinReduceStep fs f k buf@Buffering{..} x =
       accumulate =
           Buffering { bufData = HM.insertWith add ds [x] bufData
                     , bufCurDS = Just ds
-                    -- , bufDoneDS = done
                     }
-
-      -- -- | add to done if the prev dataset is finished
-      -- done =
-      --   case bufCurDS of
-      --     Nothing -> bufDoneDS
-      --     Just ds' ->
-      --       case ds' == ds of
-      --         True -> bufDoneDS
-      --         False -> V.cons ds' bufDoneDS
 
       add new old = new ++ old
       [jk, ds] = k
 
-joinReduceStep _ f k str@Streaming{} x = emitStream f str x >> return str
+joinReduceStep _ str@Streaming{} (k,x) = emitStream str x >> return str
 
 
 
@@ -214,13 +213,13 @@ mapJoin getDS prism f = do
 
 
 -------------------------------------------------------------------------------
-joinMain :: (MonadIO m, Serialize a, Monoid a, MonadThrow m, Show a)
+joinMain :: (MonadIO m, Serialize r, Monoid r, MonadThrow m, Show r)
          => DataDefs
          -> (String -> DataSet)
-         -> (DataSet -> Conduit B.ByteString m (JoinKey, a))
-         -> (a -> m ())
+         -> (DataSet -> Conduit B.ByteString m (JoinKey, r))
+         -> Conduit r m B.ByteString
          -> m ()
-joinMain fs getDS mkMap emit = mapReduceMain joinOpts mp rd def fin
+joinMain fs getDS mkMap out = mapReduceMain joinOpts mp rd out
     where
 
       mp = do
@@ -230,5 +229,4 @@ joinMain fs getDS mkMap emit = mapReduceMain joinOpts mp rd def fin
 
       go ds (jk, a) = ([jk, ds], a)
 
-      rd = joinReduceStep fs emit
-      fin = joinFinalize fs emit
+      rd = joinReducer fs
