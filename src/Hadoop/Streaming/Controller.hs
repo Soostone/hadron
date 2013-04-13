@@ -38,7 +38,11 @@ module Hadoop.Streaming.Controller
     , MapReduce (..)
     , DataDef (..)
     , ddef
+
+    -- * Control flow operations
+
     , connect
+    , io
 
     ) where
 
@@ -109,6 +113,9 @@ data ConI a where
             -> ConI ()
 
 
+    ConIO :: IO a -> ConI a
+
+
 -- | All MapReduce steps are integrated in the 'Controller' monad.
 newtype Controller a = Controller { unController :: Program ConI a }
     deriving (Functor, Applicative, Monad)
@@ -120,6 +127,13 @@ newtype Controller a = Controller { unController :: Program ConI a }
 -- of sources and a destination.
 connect :: MapReduce a IO b -> [DataDef IO a] -> DataDef IO b -> Controller ()
 connect mr inp outp = Controller $ singleton $ Connect mr inp outp
+
+
+-- | LIft IO into 'Controller'. Note that this is a NOOP for when the
+-- Mappers/Reducers are running; it only executes in the main
+-- controller application during job-flow orchestration.
+io :: IO a -> Controller a
+io f = Controller $ singleton $ ConIO f
 
 
 newMRKey :: MonadState ContState m => m String
@@ -146,6 +160,9 @@ orchestrate (Controller p) set s = evalStateT (runEitherT (go p)) s
       eval (i :>>= f) = eval' i >>= go . f
 
       eval' :: (MonadLogger m, MonadIO m) => ConI a -> EitherT String (StateT ContState m) a
+
+      eval' (ConIO f) = liftIO f
+
       eval' (Connect mr inp outp) = go'
           where
             go' = do
@@ -183,6 +200,9 @@ hadoopMain c@(Controller p) hs = do
 
 
       go :: String -> ConI b -> StateT ContState m b
+
+      go arg (ConIO _) = error "You tried to use the result of an IO action during Map-Reduce operation"
+
       go arg (Connect (MapReduce mro mp rd ) inp outp) = do
           mrKey <- newMRKey
           case find ((== arg) . snd) $ mkArgs mrKey of
