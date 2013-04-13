@@ -30,6 +30,7 @@ module Hadoop.Streaming
     , mapper
     , mapperWith
     , reducer
+    , reducerMain
 
     -- * Serialization Helpers
     , Protocol (..)
@@ -72,6 +73,8 @@ import qualified Data.Serialize                   as Ser
 import           Options.Applicative              hiding (Parser)
 import           Safe
 import           System.IO
+-------------------------------------------------------------------------------
+import           Hadoop.Streaming.Hadoop
 -------------------------------------------------------------------------------
 
 
@@ -135,7 +138,7 @@ lineC n = linesConduit =$= C.map ppair
 mapReduce
     :: (MonadIO m, MonadThrow m)
     => MROptions a
-    -> Mapper m a
+    -> Mapper B.ByteString m a
     -> Reducer a m b
     -> Conduit b m B.ByteString
     -- ^ A final output serializer
@@ -143,7 +146,21 @@ mapReduce
 mapReduce mro f g out = (mp, rd)
     where
       mp = mapperWith (mroPrism mro) f
-      rd = reducer mro g $= out $= C.mapM_ emitOutput $$ C.sinkNull
+      rd = reducerMain mro g out
+
+
+-------------------------------------------------------------------------------
+reducerMain
+    :: (MonadIO m, MonadThrow m)
+    => MROptions a
+    -> Reducer a m r
+    -> Conduit r m B.ByteString
+    -> m ()
+reducerMain mro g out =
+    reducer mro g $=
+    out $=
+    C.mapM_ emitOutput $$
+    C.sinkNull
 
 
 -- | Use this whenever you want to emit a line to the output as part
@@ -185,22 +202,23 @@ type CompositeKey   = [B.ByteString]
 -------------------------------------------------------------------------------
 -- | A 'Mapper' parses and converts the unbounded incoming stream of
 -- input into a stream of (key, value) pairs.
-type Mapper m a     = Conduit B.ByteString m ([Key], a)
+type Mapper a m b     = Conduit a m ([Key], b)
 
 
 data MROptions a = MROptions {
-      mroEq      :: ([Key] -> [Key] -> Bool)
+      mroEq    :: ([Key] -> [Key] -> Bool)
     -- ^ An equivalence test for incoming keys. True means given two
     -- keys are part of the same reduce series.
-    , mroKeySegs :: Int
+    , mroPart  :: PartitionStrategy
     -- ^ Number of segments to expect in incoming keys.
-    , mroPrism   :: Prism' B.ByteString a
+    , mroPrism :: Prism' B.ByteString a
     -- ^ A serialization scheme for the incoming values.
     }
 
 
+
 instance Default (MROptions B.ByteString) where
-    def = MROptions (==) 1 id
+    def = MROptions (==) def id
 
 
 -------------------------------------------------------------------------------
@@ -282,7 +300,7 @@ reducer MROptions{..} f = do
       log i = liftIO $ emitCounter "reducer" "rows_processed" 10
 
       stream = sourceHandle stdin =$=
-               lineC mroKeySegs =$=
+               lineC (numSegs mroPart) =$=
                performEvery 10 log =$=
                C.mapMaybe (_2 (firstOf mroPrism)) =$=
                go2
@@ -364,7 +382,7 @@ pShow = prism
 mapReduceMain
     :: (MonadIO m, MonadThrow m)
     => MROptions a
-    -> Mapper m a
+    -> Mapper B.ByteString m a
     -> Reducer a m r
     -- ^ Reducer for a stream of values belonging to the same key.
     -> Conduit r m B.ByteString

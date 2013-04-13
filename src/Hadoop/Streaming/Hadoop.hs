@@ -42,7 +42,18 @@ instance Default HadoopSettings where
 
 data PartitionStrategy
     = NoPartition
-    | Partition { keySegs :: Int, partSegs :: Int }
+    | Partition {
+        keySegs  :: Int
+      -- ^ Total segments comprising a key
+      , partSegs :: Int
+      -- ^ First N key segments used for partitioning
+      }
+
+instance Default PartitionStrategy where
+    def = NoPartition
+
+numSegs NoPartition = 1
+numSegs Partition{..} = keySegs
 
 
 data MRSettings = MRSettings {

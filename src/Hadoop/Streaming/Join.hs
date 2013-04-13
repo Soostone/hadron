@@ -13,20 +13,21 @@ module Hadoop.Streaming.Join
 -------------------------------------------------------------------------------
 import           Control.Lens
 import           Control.Monad.Trans
-import qualified Data.ByteString.Char8 as B
+import qualified Data.ByteString.Char8   as B
 import           Data.Conduit
-import qualified Data.Conduit.List     as C
+import qualified Data.Conduit.List       as C
 import           Data.Default
-import qualified Data.HashMap.Strict   as HM
+import qualified Data.HashMap.Strict     as HM
 import           Data.List
 import           Data.Monoid
 import           Data.Ord
 import           Data.Serialize
-import qualified Data.Vector           as V
+import qualified Data.Vector             as V
 import           Debug.Trace
 import           System.Environment
 -------------------------------------------------------------------------------
 import           Hadoop.Streaming
+import           Hadoop.Streaming.Hadoop
 -------------------------------------------------------------------------------
 
 
@@ -103,7 +104,7 @@ emitStream Streaming{..} a = V.mapM_ (yield . mappend a) strStems
 
 -------------------------------------------------------------------------------
 joinOpts :: Serialize a => MROptions a
-joinOpts = MROptions eq 2 pSerialize
+joinOpts = MROptions eq (Partition 2 1) pSerialize
     where
       eq [a1,a2] [b1,b2] = a1 == b1
 

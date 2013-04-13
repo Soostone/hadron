@@ -8,11 +8,23 @@
 {-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE NoMonomorphismRestriction  #-}
 {-# LANGUAGE RankNTypes                 #-}
+{-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE TemplateHaskell            #-}
 {-# LANGUAGE UndecidableInstances       #-}
 
-module Hadoop.Streaming.EDSL where
+module Hadoop.Streaming.Controller
+    (
+    -- * Command Line Entry Point
+      hadoopMain
+
+    -- * Hadoop Program Construction
+    , Controller
+    , MapReduce (..)
+    , connect
+
+
+    ) where
 
 -------------------------------------------------------------------------------
 import           Control.Applicative
@@ -21,38 +33,19 @@ import           Control.Error
 import           Control.Lens
 import           Control.Monad.Operational as O
 import           Control.Monad.State
-import           Data.ByteString           (ByteString)
+import           Control.Monad.Trans
+import qualified Data.ByteString           as B
 import           Data.Conduit
 import           Data.Default
 import qualified Data.HashMap.Strict       as HM
 import           Data.List
 import qualified Data.Map                  as M
-import           Data.Vault                as V
 import           System.Environment
 -------------------------------------------------------------------------------
+import           Hadoop.Streaming
 import           Hadoop.Streaming.Hadoop
 -------------------------------------------------------------------------------
 
-
-data JobId
-
-data JobStatus
-    = JobFinished
-    | JobStarted
-    | JobPending
-    | JobFailed
-    deriving (Eq,Show,Read,Ord)
-
-
-data DataStatus
-    = Ready
-    | InProgress JobId
-
-
-
-
-type Mapper a m v = Conduit a m (CompositeKey, v)
-type Reducer v m b = Sink (CompositeKey, v) m (Maybe b)
 
 
 -------------------------------------------------------------------------------
@@ -60,10 +53,7 @@ type Reducer v m b = Sink (CompositeKey, v) m (Maybe b)
 data MapReduce a m b = forall v. MapReduce {
       mrMapper  :: Mapper a m v
     , mrReducer :: Reducer v m b
-    , mrEq      :: CompositeKey -> CompositeKey -> Bool
-    , mrPrism   :: Prism' B.ByteString v
-    -- ^ A prism for the intermediate value b
-    , mrPart    :: PartitionStrategy
+    , mrOptions :: MROptions v
     }
 
 
@@ -77,7 +67,9 @@ data DataDef m a = DataDef
     , proto    :: Protocol m a
     }
 
+
 -- | Construct a 'DataDef'
+ddef :: Location -> Protocol m a -> DataDef m a
 ddef = DataDef
 
 
@@ -93,10 +85,9 @@ makeLenses ''ContState
 
 
 
-
 data ConI a where
-    Connect :: forall m i o. MapReduce i m o
-            -> [DataDef m i] -> DataDef m o
+    Connect :: forall i o. MapReduce i IO o
+            -> [DataDef IO i] -> DataDef IO o
             -> ConI ()
 
 
@@ -109,7 +100,7 @@ newtype Controller a = Controller { unController :: Program ConI a }
 -------------------------------------------------------------------------------
 -- | Connect a typed MapReduce application you will supply with a list
 -- of sources and a destination.
-connect :: MapReduce a m b -> [DataDef m a] -> DataDef m b -> Controller ()
+connect :: MapReduce a IO b -> [DataDef IO a] -> DataDef IO b -> Controller ()
 connect mr inp outp = Controller $ singleton $ Connect mr inp outp
 
 
@@ -150,62 +141,38 @@ data Phase = Map | Reduce
 
 
 -------------------------------------------------------------------------------
--- | Interpreter for the command line program to actually perform the
--- data processing tasks.
-cli c@(Controller p) hs = do
-    args <- getArgs
+-- | The main entry point. Use this function to produce a command line
+-- program that encapsulates everything.
+hadoopMain
+    :: forall m a. (MonadThrow m, MonadIO m)
+    => Controller a
+    -> HadoopSettings
+    -> m ()
+hadoopMain c@(Controller p) hs = do
+    args <- liftIO getArgs
     case args of
       [] -> do
         res <- orchestrate c hs def
-        either print (const $ putStrLn "Success.") res
-      [arg] -> evalStateT (interpretWithMonad (go arg) p) def
+        liftIO $ either print (const $ putStrLn "Success.") res
+      [arg] -> do
+        evalStateT (interpretWithMonad (go arg) p) def
+        return ()
       _ -> error "Usage: No arguments for job control or a phase name."
     where
+
       mkArgs mrKey = [ (Map, "map_" ++ mrKey)
                      , (Reduce, "reduce_" ++ mrKey) ]
 
-      go :: String -> ConI a -> StateT ContState IO a
-      go arg (Connect mr inp outp) = do
+
+      go :: String -> ConI b -> StateT ContState m b
+      go arg (Connect (MapReduce mp rd mro@MROptions{..}) inp outp) = do
           mrKey <- newMRKey
           case find ((== arg) . snd) $ mkArgs mrKey of
             Just (Map, _) -> do
               let inSer = proto $ head inp
-                  outSer = proto outp
-              let m' = protoDec inSer =$= (mrMapper mr) =$= protoEnc outSer
-              mapper m'
+              liftIO $ (mapperWith mroPrism $ protoDec inSer =$= mp)
             Just (Reduce, _) -> do
-              let mro = MROptions mrEq (keySegs mrPart) mrPrism
-              reducer mro (mrReducer mr)
+              liftIO $ (reducerMain mro rd (protoEnc $ proto outp))
             Nothing -> return ()
-
-
-
--- -------------------------------------------------------------------------------
--- connect mr@(MapReduce m r) inp@DataDef{..} outp = do
---     execDataDef inp
---     mrKey <- liftIO newKey
---     let m' = deser =$= m
---     csJobs %= V.insert mrKey (MapReduce m' r)
-
-
--- newtype Controller m a = Controller { runController :: StateT CState m a }
-
-
--- ($$) :: MapReduce a m b -> (DataDef a) -> Controller m (DataDef b)
-
-
-
-execDataDef = undefined
-
-
-mr1 = undefined
-mr2 = undefined
-mr3 = undefined
-
-
--- mySequence = do
---     res1 <- connect mr1 a
---     _ <- connect mr2 a
---     connect mr3 res1
 
 
