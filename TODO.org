@@ -1,0 +1,19 @@
+
+
+
+* TODOs
+
+  - Reuse the Tap concept for Join data definitions, maybe get rid of
+    the (String -> DataSet) concept?
+
+  - Make a better CLI interface that can specify common hadoop
+    settings (e.g. EMR vs. Cloudera)
+
+  - Add built-in, common reducers, mappers, etc.
+
+  - (?) Add support for parsing file locations, other settings from
+    a config file
+
+  - Any chance for a non-hadoop, single-machine backend via 'sort'?
+
+  - 
