@@ -32,17 +32,29 @@ module Hadoop.Streaming.Controller
     (
     -- * Command Line Entry Point
       hadoopMain
+    , HadoopSettings (..)
+    , clouderaDemo
+    , amazonEMR
+
+    -- * Logging Related
+
+    , logTo
 
     -- * Hadoop Program Construction
     , Controller
     , MapReduce (..)
-    , DataDef (..)
-    , ddef
+    , Tap (..)
+    , Tap'
+    , tap
 
 
     -- * Buil-in Map-Reduce applications
 
     , joinStep
+    , DataDefs
+    , DataSet
+    , JoinType (..)
+    , JoinKey
 
     -- * Control flow operations
 
@@ -90,17 +102,25 @@ data MapReduce a m b = forall v. MapReduce {
 -- | The hadoop-understandable location of a datasource
 type Location = String
 
--- | A data source definition: includes location and protocol used to
--- serialize/deserialize.
-data DataDef m a = DataDef
+-- | Tap is a data source definition that *knows* how to serve records
+-- of tupe 'a'.
+--
+-- It comes with knowledge on how to serialize ByteString
+-- to that type and can be used both as a sink (to save data form MR
+-- output) or source (to feed MR programs).
+data Tap m a = Tap
     { location :: Location
     , proto    :: Protocol' m a
     }
 
 
+-- | It is often just fine to use IO as the base monad for MapReduce ops.
+type Tap' a = Tap IO a
+
+
 -- | Construct a 'DataDef'
-ddef :: Location -> Protocol' m a -> DataDef m a
-ddef = DataDef
+tap :: Location -> Protocol' m a -> Tap m a
+tap = Tap
 
 
 data ContState = ContState {
@@ -117,7 +137,7 @@ makeLenses ''ContState
 
 data ConI a where
     Connect :: forall i o. MapReduce i IO o
-            -> [DataDef IO i] -> DataDef IO o
+            -> [Tap IO i] -> Tap IO o
             -> ConI ()
 
 
@@ -133,7 +153,7 @@ newtype Controller a = Controller { unController :: Program ConI a }
 -------------------------------------------------------------------------------
 -- | Connect a typed MapReduce application you will supply with a list
 -- of sources and a destination.
-connect :: MapReduce a IO b -> [DataDef IO a] -> DataDef IO b -> Controller ()
+connect :: MapReduce a IO b -> [Tap IO a] -> Tap IO b -> Controller ()
 connect mr inp outp = Controller $ singleton $ Connect mr inp outp
 
 

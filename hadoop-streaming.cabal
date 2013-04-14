@@ -26,6 +26,7 @@ library
      bytestring,
      conduit >= 1.0,
      conduit-utils,
+     csv-conduit >= 0.5.1,
      attoparsec-conduit >= 1.0,
      containers,
      cereal,

@@ -15,7 +15,19 @@
 ----------------------------------------------------------------------------
 
 
-module Hadoop.Streaming.Hadoop where
+module Hadoop.Streaming.Hadoop
+    ( HadoopSettings (..)
+    , clouderaDemo
+    , amazonEMR
+
+    , PartitionStrategy (..)
+    , numSegs
+
+    , MRSettings (..)
+    , mrSettings
+
+    , launchMapReduce
+    ) where
 
 -------------------------------------------------------------------------------
 import           Control.Error
@@ -37,6 +49,21 @@ data HadoopSettings = HadoopSettings {
     , hsJar :: String
     }
 
+
+-- | Settings for the cloudera demo VM.
+clouderaDemo :: HadoopSettings
+clouderaDemo = HadoopSettings {
+            hsBin = "hadoop"
+          , hsJar = "/usr/lib/hadoop-0.20-mapreduce/contrib/streaming/hadoop-streaming-2.0.0-mr1-cdh4.2.0.jar"
+          }
+
+
+-- | Settings for Amazon's EMR instances.
+amazonEMR :: HadoopSettings
+amazonEMR = HadoopSettings {
+              hsBin = "/home/hadoop/bin/hadoop"
+            , hsJar = "contrib/streaming/hadoop-streaming.jar"
+            }
 
 
 instance Default HadoopSettings where

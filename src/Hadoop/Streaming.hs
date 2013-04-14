@@ -1,6 +1,7 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts          #-}
 {-# LANGUAGE FlexibleInstances         #-}
+{-# LANGUAGE MultiParamTypeClasses     #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE OverloadedStrings         #-}
 {-# LANGUAGE RankNTypes                #-}
@@ -40,6 +41,7 @@ module Hadoop.Streaming
     , linesProtocol
     , serProtocol
     , showProtocol
+    , csvProtocol
 
     , pSerialize
     , pShow
@@ -71,6 +73,7 @@ import           Data.Conduit.Attoparsec
 import           Data.Conduit.Binary              (sinkHandle, sourceHandle)
 import qualified Data.Conduit.List                as C
 import           Data.Conduit.Utils
+import           Data.CSV.Conduit
 import           Data.Default
 import qualified Data.Map                         as M
 import qualified Data.Serialize                   as Ser
@@ -359,6 +362,12 @@ linesProtocol = Protocol { protoEnc = C.map (\x -> B.concat [x, "\n"])
 -- make it newline-safe, then turn into newline-separated stream.
 serProtocol :: (MonadThrow m, Ser.Serialize a) => Protocol' m a
 serProtocol = prismToProtocol pSerialize
+
+
+-------------------------------------------------------------------------------
+-- | Protocol for converting to/from any stream type 'b' and CSV type 'a'.
+csvProtocol :: (MonadThrow m, CSV b a) => CSVSettings -> Protocol m b a
+csvProtocol set = Protocol (fromCSV set) (intoCSV set)
 
 
 -------------------------------------------------------------------------------
