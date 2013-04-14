@@ -3,6 +3,12 @@
 
 * TODOs
 
+  - Integrated check for whether target Tap exists - if so, skip the
+    query and move onto next. If not, run the query.
+
+    - Check to make sure file actually exists and size > 0. If not,
+      run the query, returning error from hadoop to aler the user.
+
   - Reuse the Tap concept for Join data definitions, maybe get rid of
     the (String -> DataSet) concept?
 
