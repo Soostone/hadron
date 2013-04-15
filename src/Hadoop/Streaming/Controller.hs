@@ -30,6 +30,7 @@
 
 module Hadoop.Streaming.Controller
     (
+
     -- * Command Line Entry Point
       hadoopMain
     , HadoopSettings (..)
@@ -37,7 +38,6 @@ module Hadoop.Streaming.Controller
     , amazonEMR
 
     -- * Logging Related
-
     , logTo
 
     -- * Hadoop Program Construction
@@ -47,9 +47,7 @@ module Hadoop.Streaming.Controller
     , Tap'
     , tap
 
-
     -- * Buil-in Map-Reduce applications
-
     , joinStep
     , DataDefs
     , DataSet
@@ -57,7 +55,6 @@ module Hadoop.Streaming.Controller
     , JoinKey
 
     -- * Control flow operations
-
     , connect
     , io
 
@@ -71,7 +68,7 @@ import           Control.Lens
 import           Control.Monad.Operational as O
 import           Control.Monad.State
 import           Control.Monad.Trans
-import qualified Data.ByteString           as B
+import qualified Data.ByteString.Char8     as B
 import           Data.Conduit
 import           Data.Default
 import qualified Data.HashMap.Strict       as HM
@@ -112,6 +109,11 @@ data Tap m a = Tap
     { location :: Location
     , proto    :: Protocol' m a
     }
+
+
+-- | If two loacitons are the same, we consider two Taps equal.
+instance Eq (Tap m a) where
+    a == b = location a == location b
 
 
 -- | It is often just fine to use IO as the base monad for MapReduce ops.
@@ -248,23 +250,31 @@ hadoopMain c@(Controller p) hs = do
 
 
 
-
 -------------------------------------------------------------------------------
 -- | A convenient way to express multi-way join operations into a
 -- single data type.
 joinStep
     :: (Show b, MonadThrow m, Monoid b, MonadIO m,
         Serialize b)
-    => [(DataSet, JoinType)]
+    => [(Tap m a, JoinType)]
     -- ^ Dataset definitions
-    -> (String -> DataSet)
-    -- ^ A function to identify current dataset from input filename
-    -> (DataSet -> Conduit a m (JoinKey, b))
+    -> (Tap m a -> Conduit a m (JoinKey, b))
     -- ^ A custom function for each dataset, mapping its data to a
     -- uniform record format 'b' that we know how to 'mconcat'
     -- together.
     -> MapReduce a m b
-joinStep fs getDS mkMap = MapReduce joinOpts mp rd
+joinStep fs mkMap = MapReduce joinOpts mp rd
     where
-      mp = joinMapper getDS mkMap
-      rd = joinReducer fs
+      locations = map (B.pack . location . fst) fs
+      tapIx = M.fromList $ zip locations (map fst fs)
+
+      fs' = over (traverse._1) (B.pack . location) fs
+
+
+      getDS nm = fromMaybe (error "Can't identify current tap from filename.") $ find (flip B.isInfixOf (B.pack nm)) locations
+      mkMap' ds = mkMap $ fromMaybe (error "Can't identify current tap in IX.") $ M.lookup ds tapIx
+
+      mp = joinMapper getDS mkMap'
+      rd = joinReducer fs'
+
+
