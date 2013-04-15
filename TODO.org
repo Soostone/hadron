@@ -12,6 +12,9 @@
   - Reuse the Tap concept for Join data definitions, maybe get rid of
     the (String -> DataSet) concept?
 
+    - hash tap paths to limit length impact
+    - prefix with given order so the sets remain ordered
+
   - Make a better CLI interface that can specify common hadoop
     settings (e.g. EMR vs. Cloudera)
 

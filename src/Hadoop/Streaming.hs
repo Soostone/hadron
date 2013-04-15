@@ -158,6 +158,7 @@ mapReduce mro f g out = (mp, rd)
 
 
 -------------------------------------------------------------------------------
+-- | Build a main function entry point for a reducer.
 reducerMain
     :: (MonadIO m, MonadThrow m)
     => MROptions a

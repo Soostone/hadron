@@ -65,12 +65,14 @@ import           Control.Applicative
 import           Control.Concurrent
 import           Control.Error
 import           Control.Lens
-import           Control.Monad.Operational as O
+import           Control.Monad.Operational hiding (view)
+import qualified Control.Monad.Operational as O
 import           Control.Monad.State
 import           Control.Monad.Trans
 import qualified Data.ByteString.Char8     as B
 import           Data.Conduit
 import           Data.Default
+import           Data.Hashable
 import qualified Data.HashMap.Strict       as HM
 import           Data.List
 import qualified Data.Map                  as M
@@ -254,25 +256,45 @@ hadoopMain c@(Controller p) hs = do
 -- | A convenient way to express multi-way join operations into a
 -- single data type.
 joinStep
-    :: (Show b, MonadThrow m, Monoid b, MonadIO m,
+    :: forall m b a. (Show b, MonadThrow m, Monoid b, MonadIO m,
         Serialize b)
-    => [(Tap m a, JoinType)]
-    -- ^ Dataset definitions
-    -> (Tap m a -> Conduit a m (JoinKey, b))
-    -- ^ A custom function for each dataset, mapping its data to a
-    -- uniform record format 'b' that we know how to 'mconcat'
-    -- together.
+    => [(Tap m a, JoinType, Conduit a m (JoinKey, b))]
+    -- ^ Dataset definitions, and how to map each dataset.
     -> MapReduce a m b
-joinStep fs mkMap = MapReduce joinOpts mp rd
+joinStep fs = MapReduce joinOpts mp rd
     where
-      locations = map (B.pack . location . fst) fs
-      tapIx = M.fromList $ zip locations (map fst fs)
+      salt = 0
+      showBS = B.pack . show
 
-      fs' = over (traverse._1) (B.pack . location) fs
+      names :: [(Location, DataSet)]
+      names = map (\ (i, loc) -> (loc, B.concat [showBS i, ":",  showBS $ hashWithSalt salt loc])) $ zip [0..] locations
+
+      nameIx :: M.Map Location DataSet
+      nameIx = M.fromList names
+
+      tapIx :: M.Map DataSet (Tap m a)
+      tapIx = M.fromList $ zip (map snd names) (map (view _1) fs)
 
 
-      getDS nm = fromMaybe (error "Can't identify current tap from filename.") $ find (flip B.isInfixOf (B.pack nm)) locations
-      mkMap' ds = mkMap $ fromMaybe (error "Can't identify current tap in IX.") $ M.lookup ds tapIx
+      locations :: [Location]
+      locations = map (location . view _1) fs
+
+
+      fs' = map (\(t, jt, cond) -> (B.pack . location $ t, jt)) fs
+
+
+      -- | get dataset name from a given input filename
+      getDS nm = fromMaybe (error "Can't identify current tap from filename.") $ do
+        loc <- find (flip isInfixOf nm) locations
+        name <- M.lookup loc nameIx
+        return name
+
+
+      -- | get the conduit for given dataset name
+      mkMap' ds = fromMaybe (error "Can't identify current tap in IX.") $ do
+                      tap <- M.lookup ds tapIx
+                      cond <- find ((== tap) . view _1) fs
+                      return $ view _3 cond
 
       mp = joinMapper getDS mkMap'
       rd = joinReducer fs'
