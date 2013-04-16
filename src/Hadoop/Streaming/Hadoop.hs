@@ -62,7 +62,7 @@ clouderaDemo = HadoopSettings {
 amazonEMR :: HadoopSettings
 amazonEMR = HadoopSettings {
               hsBin = "/home/hadoop/bin/hadoop"
-            , hsJar = "contrib/streaming/hadoop-streaming.jar"
+            , hsJar = "/home/hadoop/contrib/streaming/hadoop-streaming.jar"
             }
 
 
