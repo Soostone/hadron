@@ -21,6 +21,7 @@ module Hadoop.Streaming
     -- * Hadoop Utilities
     , emitCounter
     , emitStatus
+    , getFileName
 
      -- * MapReduce Construction
     , MROptions (..)
@@ -81,6 +82,7 @@ import qualified Data.Serialize                   as Ser
 import           Options.Applicative              hiding (Parser)
 import           Prelude                          hiding (id, (.))
 import           Safe
+import           System.Environment
 import           System.IO
 -------------------------------------------------------------------------------
 import           Hadoop.Streaming.Hadoop
@@ -179,6 +181,11 @@ emitOutput :: MonadIO m => B.ByteString -> m ()
 emitOutput bs = liftIO $ B.hPutStr stdout bs
 
 
+-- | Get the current filename from Hadoop ENV.
+getFileName :: MonadIO m => m String
+getFileName = liftIO $ getEnv "map_input_file"
+
+
 -- | Construct a mapper program using given serialization Prism.
 mapperWith
     :: MonadIO m
@@ -196,14 +203,18 @@ mapper f = do
     liftIO $ hSetBuffering stderr LineBuffering
     liftIO $ hSetBuffering stdout LineBuffering
     liftIO $ hSetBuffering stdin LineBuffering
+    fn <- getFileName
     sourceHandle stdin =$=
       f =$=
-      performEvery 10 log =$=
+      performEvery every (log (B.pack fn)) =$=
       C.map conv $$
       sinkHandle stdout
     where
       conv (k,v) = B.concat [B.intercalate "\t" k, "\t", v, "\n"]
-      log i = liftIO $ emitCounter "mapper" "rows_emitted" 10
+      every = 10
+      log fn i = liftIO $ do
+        emitCounter "hadoop-streaming" "Mapper rows emitted" every
+        emitCounter "hadoop-streaming" (B.concat ["Input rows: ", fn]) every
 
 
 type CompositeKey   = [B.ByteString]
@@ -283,35 +294,14 @@ reducer MROptions{..} f = do
                   yield x
                   sameKey (Just k)
 
-      -- go cur = do
-      --     next <- await
-      --     case next of
-      --       Nothing ->
-      --         case cur of
-      --           Just (curKey, a) -> finalize curKey a
-      --           Nothing -> return ()
-      --       Just (k,v) ->
-      --         case cur of
-      --           Just (curKey, a) -> do
-      --             !a' <- case mroEq curKey k of
-      --               True -> lift $ f k a v
-      --               False -> do
-      --                 -- liftIO $ print $ "finalizing key: " ++ show curKey
-      --                 finalize curKey a
-      --                 lift $ f k a0 v
-      --             go (Just (k, a'))
-      --           Nothing -> do
-      --             !a' <- lift $ f k a0 v
-      --             go (Just (k, a'))
 
-      -- finalize k v = lift $ fin k v
+      log i = liftIO $ emitCounter "hadoop-streaming" "Reducer rows processed" every
 
-
-      log i = liftIO $ emitCounter "reducer" "rows_processed" 10
+      every = 10
 
       stream = sourceHandle stdin =$=
                lineC (numSegs mroPart) =$=
-               performEvery 10 log =$=
+               performEvery every log =$=
                C.mapMaybe (_2 (firstOf mroPrism)) =$=
                go2
 

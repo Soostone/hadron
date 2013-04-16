@@ -207,7 +207,7 @@ joinMapper
     -> (DataSet -> Conduit a m (JoinKey, r))
     -> Mapper a m r
 joinMapper getDS mkMap = do
-    fi <- liftIO $ getEnv "map_input_file"
+    fi <- getFileName
     let ds = getDS fi
     mkMap ds =$= C.map (go ds)
   where
