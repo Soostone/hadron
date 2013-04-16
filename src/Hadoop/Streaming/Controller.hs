@@ -47,7 +47,7 @@ module Hadoop.Streaming.Controller
     , Tap'
     , tap
 
-    -- * Buil-in Map-Reduce applications
+    -- * Joining Multiple Datasets
     , joinStep
     , DataDefs
     , DataSet
@@ -260,7 +260,7 @@ joinStep
     :: forall m b a. (Show b, MonadThrow m, Monoid b, MonadIO m,
         Serialize b)
     => [(Tap m a, JoinType, Conduit a m (JoinKey, b))]
-    -- ^ Dataset definitions, and how to map each dataset.
+    -- ^ Dataset definitions and how to map each dataset.
     -> MapReduce a m b
 joinStep fs = MapReduce joinOpts mp rd
     where
