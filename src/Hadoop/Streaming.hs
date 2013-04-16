@@ -210,13 +210,15 @@ mapperWith p f = mapper $ f =$= C.mapMaybe conv
       conv x = _2 (firstOf (re p)) x
 
 
+truncEnd n = B.reverse . B.take n . B.reverse
+
 -- | Construct a mapper program using a given Conduit.
 mapper :: MonadIO m => Conduit B.ByteString m ([Key], B.ByteString) -> m ()
 mapper f = do
     liftIO $ hSetBuffering stderr LineBuffering
     liftIO $ hSetBuffering stdout LineBuffering
     liftIO $ hSetBuffering stdin LineBuffering
-    fn <- B.pack `liftM` getFileName
+    fn <- (truncEnd 40 . B.pack) `liftM` getFileName
     sourceHandle stdin =$=
       performEvery every (inLog fn) =$=
       f =$=
@@ -227,10 +229,10 @@ mapper f = do
       conv (k,v) = B.concat [B.intercalate "\t" k, "\t", v, "\n"]
       every = 1
 
-      inLog fn i = liftIO $ emitCounter "hadoop-streaming" (B.concat ["Input rows: ", fn]) every
+      inLog fn i = liftIO $ emitCounter "hadoop-streaming" (B.concat ["Map input chunks: ", fn]) every
       outLog fn i = do
-        liftIO $ emitCounter "hadoop-streaming" "Mapper rows emitted" every
-        liftIO $ emitCounter "hadoop-streaming" (B.concat ["Mapped rows: ", fn]) every
+        liftIO $ emitCounter "hadoop-streaming" "Map rows emitted" every
+        liftIO $ emitCounter "hadoop-streaming" (B.concat ["Map emitted: ", fn]) every
 
 
 
@@ -312,14 +314,16 @@ reducer MROptions{..} f = do
                   sameKey (Just k)
 
 
-      log i = liftIO $ emitCounter "hadoop-streaming" "Reducer rows processed" every
+      logIn i = liftIO $ emitCounter "hadoop-streaming" "Reducer rows processed" every
+      logConv i = liftIO $ emitCounter "hadoop-streaming" "Reducer object deserialized" every
 
       every = 1
 
       stream = sourceHandle stdin =$=
                lineC (numSegs mroPart) =$=
-               performEvery every log =$=
+               performEvery every logIn =$=
                C.mapMaybe (_2 (firstOf mroPrism)) =$=
+               performEvery every logConv =$=
                go2
 
 

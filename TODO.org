@@ -3,6 +3,8 @@
 
 * TODOs
 
+  - Make launchHadoop logging real-time
+
   - Make and expose some common MROptions
 
   - Tie compression settings into main function

@@ -216,7 +216,7 @@ orchestrate (Controller p) set s = evalStateT (runEitherT (go p)) s
 
       eval' MakeTap = do
           tk <- liftIO $ mkRNG >>= randomToken 64
-          let loc = B.unpack $ B.concat ["hdfs://tmp/hadoop-streaming/", tk]
+          let loc = B.unpack $ B.concat ["/tmp/hadoop-streaming/", tk]
           return $ Tap loc serProtocol
 
       eval' (Connect mr@(MapReduce mro _ _) inp outp) = go'

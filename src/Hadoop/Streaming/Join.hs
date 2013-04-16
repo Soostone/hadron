@@ -16,6 +16,10 @@ module Hadoop.Streaming.Join
     , joinReducer
     , joinOpts
 
+    -- * TODO: To be put into an Internal module
+    , JoinAcc (..)
+    , bufToStr
+
     ) where
 
 -------------------------------------------------------------------------------
@@ -24,6 +28,7 @@ import           Control.Monad.Trans
 import qualified Data.ByteString.Char8   as B
 import           Data.Conduit
 import qualified Data.Conduit.List       as C
+import           Data.Conduit.Utils
 import           Data.Default
 import qualified Data.HashMap.Strict     as HM
 import           Data.List
@@ -44,6 +49,7 @@ import           Hadoop.Streaming.Hadoop
 type DataDefs = [(DataSet, JoinType)]
 
 data JoinType = JRequired | JOptional
+  deriving (Eq,Show,Read,Ord)
 
 
 type DataSet = B.ByteString
@@ -102,13 +108,11 @@ bufToStr defs Buffering{..} = Streaming rs
 bufToStr _ _ = error "bufToStr can only convert a Buffering to a Streaming"
 
 
-
-
 -- | Given a new row in the final dataset of the joinset, emit all the
 -- joined rows immediately.
 emitStream :: (Monad m, Monoid b) => JoinAcc b -> b -> ConduitM i b m ()
 emitStream Streaming{..} a = V.mapM_ (yield . mappend a) strStems
-
+emitStream _ _ = error "emitStream can't be called unless it's in Streaming mode."
 
 -------------------------------------------------------------------------------
 joinOpts :: Serialize a => MROptions a
@@ -209,8 +213,14 @@ joinMapper
 joinMapper getDS mkMap = do
     fi <- getFileName
     let ds = getDS fi
-    mkMap ds =$= C.map (go ds)
+    performEvery every (inLog ds) =$=
+      mkMap ds =$=
+      performEvery every (outLog ds) =$=
+      C.map (go ds)
   where
+    inLog ds i = liftIO $ emitCounter "hadoop-streaming" (B.concat ["Map input dataset: ", ds]) every
+    outLog ds i = liftIO $ emitCounter "hadoop-streaming" (B.concat ["Map emit dataset: ", ds]) every
+    every = 1
     go ds (jk, a) = ([jk, ds], a)
 
 
