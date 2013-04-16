@@ -110,7 +110,7 @@ mrSettings
     -> String
     -- ^ Output files
     -> MRSettings
-mrSettings ins out = MRSettings ins out NoPartition Nothing Nothing True gzipCodec
+mrSettings ins out = MRSettings ins out NoPartition Nothing Nothing False gzipCodec
 
 
 type Codec = String
