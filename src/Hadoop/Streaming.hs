@@ -6,6 +6,18 @@
 {-# LANGUAGE OverloadedStrings         #-}
 {-# LANGUAGE RankNTypes                #-}
 {-# LANGUAGE RecordWildCards           #-}
+-----------------------------------------------------------------------------
+-- |
+-- Module      :  Hadoop.Streaming
+-- Copyright   :  Soostone Inc
+-- License     :  BSD3
+--
+-- Maintainer  :  Ozgun Ataman
+-- Stability   :  experimental
+--
+-- Low level building blocks for working with Hadoop streaming.
+----------------------------------------------------------------------------
+
 
 module Hadoop.Streaming
     (

@@ -4,7 +4,7 @@
 
 -----------------------------------------------------------------------------
 -- |
--- Module      :
+-- Module      :  Hadoop.Streaming.Hadoop
 -- Copyright   :  Soostone Inc
 -- License     :  BSD3
 --
