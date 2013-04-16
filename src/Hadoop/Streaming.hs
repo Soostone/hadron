@@ -38,6 +38,7 @@ module Hadoop.Streaming
     , Protocol'
     , prismToProtocol
 
+    , idProtocol
     , linesProtocol
     , serProtocol
     , showProtocol
@@ -350,6 +351,13 @@ prismToProtocol p =
 
              , protoDec = linesConduit =$=
                           C.mapMaybe (firstOf p) }
+
+
+-------------------------------------------------------------------------------
+-- | Basically 'id' from Control.Category. Just pass the incoming
+-- ByteString through.
+idProtocol :: Monad m => Protocol' m B.ByteString
+idProtocol = id
 
 
 -- | A simple serialization strategy that works on lines of strings.

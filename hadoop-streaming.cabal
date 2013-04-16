@@ -42,7 +42,8 @@ library
      fast-logger,
      unix,
      template-haskell,
-     text
+     text,
+     hashable
 
   hs-source-dirs:      src
   default-language:    Haskell2010
