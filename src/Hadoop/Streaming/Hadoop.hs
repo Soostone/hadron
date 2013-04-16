@@ -136,12 +136,14 @@ launchMapReduce HadoopSettings{..} mrKey MRSettings{..} = do
         hoistEither $ Left $ "MR job failed with: " ++ show e
     where
       mkArgs exec prog =
-            [ "jar", hsJar
-            , "-output", mrsOutput
+            [ "jar", hsJar] ++
+            numMap ++ numRed ++ part ++
+            inputs ++
+            [ "-output", mrsOutput
             , "-mapper", "\"" ++ prog ++ " map_" ++ mrKey ++ "\""
             , "-reducer", "\"" ++ prog ++ " reduce_" ++ mrKey ++ "\""
             , "-file", exec
-            ] ++ inputs ++ part ++ numMap ++ numRed
+            ]
 
       inputs = concatMap mkInput mrsInput
       mkInput i = ["-input", i]
@@ -153,7 +155,7 @@ launchMapReduce HadoopSettings{..} mrKey MRSettings{..} = do
                NoPartition -> []
                Partition{..} ->
                  [ "-D", "stream.num.map.output.key.fields=" ++ show keySegs
-                 , "-D", "mapred.text.key.partitioner.options=-k1,2" ++ intercalate "," (map show [1..partSegs])
+                 , "-D", "mapred.text.key.partitioner.options=-k" ++ intercalate "," (map show [1..partSegs])
                  , "-partitioner", "org.apache.hadoop.mapred.lib.KeyFieldBasedPartitioner"
                  ]
 

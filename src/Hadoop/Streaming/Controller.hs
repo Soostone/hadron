@@ -195,12 +195,13 @@ orchestrate (Controller p) set s = evalStateT (runEitherT (go p)) s
 
       eval' (ConIO f) = liftIO f
 
-      eval' (Connect mr inp outp) = go'
+      eval' (Connect mr@(MapReduce mro _ _) inp outp) = go'
           where
             go' = do
                 mrKey <- newMRKey
                 launchMapReduce set mrKey
                   (mrSettings (map location inp) (location outp))
+                    { mrsPart = mroPart mro }
 
 
 
