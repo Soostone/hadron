@@ -203,18 +203,22 @@ mapper f = do
     liftIO $ hSetBuffering stderr LineBuffering
     liftIO $ hSetBuffering stdout LineBuffering
     liftIO $ hSetBuffering stdin LineBuffering
-    fn <- getFileName
+    fn <- B.pack `liftM` getFileName
     sourceHandle stdin =$=
+      performEvery every (inLog fn) =$=
       f =$=
-      performEvery every (log (B.pack fn)) =$=
+      performEvery every (outLog fn) =$=
       C.map conv $$
       sinkHandle stdout
     where
       conv (k,v) = B.concat [B.intercalate "\t" k, "\t", v, "\n"]
-      every = 10
-      log fn i = liftIO $ do
-        emitCounter "hadoop-streaming" "Mapper rows emitted" every
-        emitCounter "hadoop-streaming" (B.concat ["Input rows: ", fn]) every
+      every = 1
+
+      inLog fn i = liftIO $ emitCounter "hadoop-streaming" (B.concat ["Input rows: ", fn]) every
+      outLog fn i = do
+        liftIO $ emitCounter "hadoop-streaming" "Mapper rows emitted" every
+        liftIO $ emitCounter "hadoop-streaming" (B.concat ["Mapped rows: ", fn]) every
+
 
 
 type CompositeKey   = [B.ByteString]
@@ -297,7 +301,7 @@ reducer MROptions{..} f = do
 
       log i = liftIO $ emitCounter "hadoop-streaming" "Reducer rows processed" every
 
-      every = 10
+      every = 1
 
       stream = sourceHandle stdin =$=
                lineC (numSegs mroPart) =$=
