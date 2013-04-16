@@ -95,6 +95,8 @@ data MRSettings = MRSettings {
     , mrsPart      :: PartitionStrategy
     , mrsNumMap    :: Maybe Int
     , mrsNumReduce :: Maybe Int
+    , mrsCompress  :: Bool
+    , mrsCodec     :: String
     }
 
 
@@ -105,7 +107,7 @@ mrSettings
     -> String
     -- ^ Output files
     -> MRSettings
-mrSettings ins out = MRSettings ins out NoPartition Nothing Nothing
+mrSettings ins out = MRSettings ins out NoPartition Nothing Nothing True "org.apache.hadoop.io.compress.GzipCodec"
 
 
 type MapReduceKey = String
@@ -137,7 +139,7 @@ launchMapReduce HadoopSettings{..} mrKey MRSettings{..} = do
     where
       mkArgs exec prog =
             [ "jar", hsJar] ++
-            numMap ++ numRed ++ part ++
+            compress ++ numMap ++ numRed ++ part ++
             inputs ++
             [ "-output", mrsOutput
             , "-mapper", "\"" ++ prog ++ " map_" ++ mrKey ++ "\""
@@ -150,6 +152,12 @@ launchMapReduce HadoopSettings{..} mrKey MRSettings{..} = do
 
       numMap = maybe [] (\x -> ["-D", "mapred.map.tasks=" ++ show x]) mrsNumMap
       numRed = maybe [] (\x -> ["-D", "mapred.reduce.tasks=" ++ show x]) mrsNumReduce
+
+      compress =
+        if mrsCompress
+          then [ "-D", "mapred.output.compress=true"
+               , "-D", "mapred.output.compression.codec=" ++ mrsCodec]
+          else []
 
       part = case mrsPart of
                NoPartition -> []

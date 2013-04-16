@@ -3,26 +3,21 @@
 
 * TODOs
 
+  - Tie compression settings into main function
+
   - Integrated check for whether target Tap exists - if so, skip the
     query and move onto next. If not, run the query.
 
     - Check to make sure file actually exists and size > 0. If not,
       run the query, returning error from hadoop to aler the user.
 
-  - Reuse the Tap concept for Join data definitions, maybe get rid of
-    the (String -> DataSet) concept?
-
-    - hash tap paths to limit length impact
-    - prefix with given order so the sets remain ordered
-
   - Make a better CLI interface that can specify common hadoop
     settings (e.g. EMR vs. Cloudera)
 
   - Add built-in, common reducers, mappers, etc.
 
+  - Any chance for a non-hadoop, single-machine backend via 'sort'?
+
   - (?) Add support for parsing file locations, other settings from
     a config file
 
-  - Any chance for a non-hadoop, single-machine backend via 'sort'?
-
-  - 
