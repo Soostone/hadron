@@ -37,6 +37,7 @@ module Hadoop.Streaming
 
      -- * MapReduce Construction
     , MROptions (..)
+    , PartitionStrategy (..)
     , mapReduceMain
     , mapReduce
 

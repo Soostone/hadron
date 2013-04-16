@@ -56,6 +56,7 @@ module Hadoop.Streaming.Controller
 
     -- * Control flow operations
     , connect
+    , connect'
     , io
 
     ) where
@@ -77,6 +78,7 @@ import qualified Data.HashMap.Strict       as HM
 import           Data.List
 import qualified Data.Map                  as M
 import           Data.Monoid
+import           Data.RNG
 import           Data.Serialize
 import qualified Data.Text                 as T
 import           System.Environment
@@ -144,8 +146,10 @@ data ConI a where
             -> [Tap IO i] -> Tap IO o
             -> ConI ()
 
+    MakeTap :: Serialize a => ConI (Tap IO a)
 
     ConIO :: IO a -> ConI a
+
 
 
 -- | All MapReduce steps are integrated in the 'Controller' monad.
@@ -155,10 +159,25 @@ newtype Controller a = Controller { unController :: Program ConI a }
 
 
 -------------------------------------------------------------------------------
+-- | Connect a MapReduce program to a set of inputs, returning the
+-- output tap that was implicity generated.
+connect' :: Serialize b => MapReduce a IO b -> [Tap IO a] -> Controller (Tap IO b)
+connect' mr inp = do
+    out <- makeTap
+    connect mr inp out
+    return out
+
+
+-------------------------------------------------------------------------------
 -- | Connect a typed MapReduce application you will supply with a list
 -- of sources and a destination.
 connect :: MapReduce a IO b -> [Tap IO a] -> Tap IO b -> Controller ()
 connect mr inp outp = Controller $ singleton $ Connect mr inp outp
+
+
+-------------------------------------------------------------------------------
+makeTap :: Serialize a => Controller (Tap IO a)
+makeTap = Controller $ singleton MakeTap
 
 
 -- | LIft IO into 'Controller'. Note that this is a NOOP for when the
@@ -194,6 +213,11 @@ orchestrate (Controller p) set s = evalStateT (runEitherT (go p)) s
       eval' :: (MonadLogger m, MonadIO m) => ConI a -> EitherT String (StateT ContState m) a
 
       eval' (ConIO f) = liftIO f
+
+      eval' MakeTap = do
+          tk <- liftIO $ mkRNG >>= randomToken 64
+          let loc = B.unpack $ B.concat ["hdfs://tmp/hadoop-streaming/", tk]
+          return $ Tap loc serProtocol
 
       eval' (Connect mr@(MapReduce mro _ _) inp outp) = go'
           where
@@ -234,7 +258,12 @@ hadoopMain c@(Controller p) hs = do
 
       go :: String -> ConI b -> StateT ContState m b
 
-      go arg (ConIO _) = error "You tried to use the result of an IO action during Map-Reduce operation"
+      go arg (ConIO _) = return $ error "You tried to use the result of an IO action during Map-Reduce operation. That's illegal."
+
+      go arg MakeTap = do
+          tk <- liftIO $ mkRNG >>= randomToken 64
+          let loc = B.unpack $ B.concat ["hdfs://hadoop-streaming/temp/", tk]
+          return $ Tap loc serProtocol
 
       go arg (Connect (MapReduce mro mp rd ) inp outp) = do
           mrKey <- newMRKey
@@ -252,6 +281,16 @@ hadoopMain c@(Controller p) hs = do
 
 
 
+-- | TODO: See if this works. Objective is to increase type safety of
+-- join inputs.
+--
+-- A join definition that ultimately produces objects of type b.
+data JoinDef m b = forall a. JoinDef {
+      joinTap  :: Tap m a
+    , joinType :: JoinType
+    , joinMap  :: Conduit a m (JoinKey, b)
+    }
+
 
 -------------------------------------------------------------------------------
 -- | A convenient way to express multi-way join operations into a
@@ -259,7 +298,8 @@ hadoopMain c@(Controller p) hs = do
 joinStep
     :: forall m b a. (Show b, MonadThrow m, Monoid b, MonadIO m,
         Serialize b)
-    => [(Tap m a, JoinType, Conduit a m (JoinKey, b))]
+   => [(Tap m a, JoinType, Conduit a m (JoinKey, b))]
+    -- => [JoinDef m b]
     -- ^ Dataset definitions and how to map each dataset.
     -> MapReduce a m b
 joinStep fs = MapReduce joinOpts mp rd

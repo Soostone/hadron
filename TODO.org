@@ -3,6 +3,8 @@
 
 * TODOs
 
+  - Make and expose some common MROptions
+
   - Tie compression settings into main function
 
   - Integrated check for whether target Tap exists - if so, skip the
