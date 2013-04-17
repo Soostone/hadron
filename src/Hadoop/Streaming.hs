@@ -32,6 +32,7 @@ module Hadoop.Streaming
 
     -- * Hadoop Utilities
     , emitCounter
+    , hsEmitCounter
     , emitStatus
     , getFileName
 
@@ -141,12 +142,22 @@ type Key = B.ByteString
 type Value = B.ByteString
 
 
+-- | Parse a line of input and eat a tab character that may be at the
+-- very end of the line. This tab is put by hadoop if this file is the
+-- result of a previous M/R that didn't have any value in the reduce
+-- step.
 parseLine :: Parser B.ByteString
 parseLine = ln <* endOfLine
     where
-      ln = takeTill (== '\n')
+      ln = do
+        x <- takeTill (== '\n')
+        return $ if B.last x == '\t'
+          then B.init x
+          else x
 
--- | Turn incoming stream into a stream of lines
+
+-- | Turn incoming stream into a stream of lines. This will
+-- automatically eat tab characters at the end of the line.
 linesConduit :: MonadThrow m => Conduit B.ByteString m B.ByteString
 linesConduit = conduitParser parseLine =$= C.map snd
 
@@ -364,11 +375,10 @@ instance Monad m => Category (Protocol m) where
 -- | Lift 'Prism' to work with a newline-separated stream of objects.
 prismToProtocol :: MonadThrow m => Prism' B.ByteString a -> Protocol' m a
 prismToProtocol p =
-    Protocol { protoEnc = C.mapMaybe (firstOf (re p)) =$=
-                          C.map (\x -> B.concat [x, "\n"])
-
-             , protoDec = linesConduit =$=
-                          C.mapMaybe (firstOf p) }
+    Protocol { protoEnc = C.mapMaybe enc
+             , protoDec = linesConduit =$= C.mapMaybe (firstOf p) }
+  where
+    enc = liftM (\x -> B.concat [x, "\n"]) . firstOf (re p)
 
 
 -------------------------------------------------------------------------------
