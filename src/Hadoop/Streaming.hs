@@ -245,10 +245,10 @@ mapper f = do
       conv (k,v) = B.concat [B.intercalate "\t" k, "\t", v, "\n"]
       every = 1
 
-      inLog fn i = liftIO $ hsEmitCounter (B.concat ["Map input chunks: ", fn]) every
+      inLog fn i = liftIO $ hsEmitCounter "Map input chunks" every
       outLog fn i = do
-        liftIO $ hsEmitCounter "Map rows emitted" every
-        liftIO $ hsEmitCounter (B.concat ["Map emitted: ", fn]) every
+        liftIO $ hsEmitCounter "Map emitted rows" every
+        -- liftIO $ hsEmitCounter (B.concat ["Map emitted: ", fn]) every
 
 
 
@@ -330,9 +330,9 @@ reducer MROptions{..} f = do
                   sameKey (Just k)
 
 
-      logIn i = liftIO $ hsEmitCounter "Reducer rows processed" every
-      logConv i = liftIO $ hsEmitCounter "Reducer object deserialized" every
-      logOut i = liftIO $ hsEmitCounter "Reducer rows emitted" every
+      logIn i = liftIO $ hsEmitCounter "Reducer processed rows" every
+      logConv i = liftIO $ hsEmitCounter "Reducer deserialized objects" every
+      logOut i = liftIO $ hsEmitCounter "Reducer emitted rows" every
 
       every = 1
 
