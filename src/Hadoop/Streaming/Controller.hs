@@ -35,6 +35,7 @@ module Hadoop.Streaming.Controller
       hadoopMain
     , HadoopSettings (..)
     , MRSettings (..)
+    , RerunStrategy (..)
     , clouderaDemo
     , amazonEMR
 
@@ -204,9 +205,10 @@ orchestrate
     => Controller a
     -> HadoopSettings
     -> MRSettings
+    -> RerunStrategy
     -> ContState
     -> m (Either String a)
-orchestrate (Controller p) set mrs s = evalStateT (runEitherT (go p)) s
+orchestrate (Controller p) set mrs rr s = evalStateT (runEitherT (go p)) s
     where
       go = eval . O.view
 
@@ -225,15 +227,42 @@ orchestrate (Controller p) set mrs s = evalStateT (runEitherT (go p)) s
       eval' (Connect mr@(MapReduce mro _ _) inp outp) = go'
           where
             go' = do
-                mrKey <- newMRKey
-                launchMapReduce set mrKey
-                  mrs { mrsInput = map location inp
-                      , mrsOutput = location outp
-                      , mrsPart = mroPart mro }
+                chk <- liftIO $ hdfsFileExists set (location outp)
+                case chk of
+                  False -> go''
+                  True ->
+                    case rr of
+                      RSFail -> lift $ $(logError) $ T.concat ["Destination file exists: ", T.pack (location outp)]
+                      RSSkip -> go''
+                      RSReRun -> do
+                        lift $ $(logInfo) $ T.pack ("Destination file exists, will delete and rerun: " ++ location outp)
+                        liftIO $ hdfsDeletePath set (location outp)
+                        go''
+            go'' = do
+              mrKey <- newMRKey
+              launchMapReduce set mrKey
+                mrs { mrsInput = map location inp
+                    , mrsOutput = location outp
+                    , mrsPart = mroPart mro }
 
 
 
 data Phase = Map | Reduce
+
+
+-------------------------------------------------------------------------------
+-- | What to do when we notice that a destination file already exists.
+data RerunStrategy
+    = RSFail
+    -- ^ Fail and log the problem.
+    | RSReRun
+    -- ^ Delete the file and rerun the analysis
+    | RSSkip
+    -- ^ Consider the analaysis already done and skip.
+    deriving (Eq,Show,Read,Ord)
+
+instance Default RerunStrategy where
+    def = RSFail
 
 
 -------------------------------------------------------------------------------
@@ -246,12 +275,13 @@ hadoopMain
     -- ^ Base hadoop configuration
     -> MRSettings
     -- ^ Base 'MRSettings' - jobs will build on this.
+    -> RerunStrategy
     -> m ()
-hadoopMain c@(Controller p) hs mrs = do
+hadoopMain c@(Controller p) hs mrs rr = do
     args <- liftIO getArgs
     case args of
       [] -> do
-        res <- orchestrate c hs mrs def
+        res <- orchestrate c hs mrs rr def
         liftIO $ either print (const $ putStrLn "Success.") res
       [arg] -> do
         evalStateT (interpretWithMonad (go arg) p) def
@@ -277,7 +307,7 @@ hadoopMain c@(Controller p) hs mrs = do
           case find ((== arg) . snd) $ mkArgs mrKey of
             Just (Map, _) -> do
               let inSer = proto $ head inp
-                  logIn i = liftIO $ hsEmitCounter "Map rows decoded"1
+                  logIn i = liftIO $ hsEmitCounter "Map rows decoded" 1
               liftIO $ (mapperWith (mroPrism mro) $ protoDec inSer =$= performEvery 1 logIn =$= mp)
             Just (Reduce, _) -> do
               liftIO $ (reducerMain mro rd (protoEnc $ proto outp))

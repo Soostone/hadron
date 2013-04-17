@@ -29,7 +29,10 @@ module Hadoop.Streaming.Hadoop
     , Codec
     , gzipCodec
 
+    -- * Hadoop Command Line Wrappers
     , launchMapReduce
+    , hdfsFileExists
+    , hdfsDeletePath
     ) where
 
 -------------------------------------------------------------------------------
@@ -185,6 +188,24 @@ launchMapReduce HadoopSettings{..} mrKey MRSettings{..} = do
                  , "-partitioner", "org.apache.hadoop.mapred.lib.KeyFieldBasedPartitioner"
                  ]
 
+
+
+-------------------------------------------------------------------------------
+-- | Check if the target file is present.
+hdfsFileExists :: HadoopSettings -> String -> IO Bool
+hdfsFileExists HadoopSettings{..} p = do
+    res <- rawSystem hsBin ["fs", "-stat", p]
+    return $ case res of
+      ExitSuccess -> True
+      ExitFailure{} -> False
+
+
+
+-------------------------------------------------------------------------------
+-- | Check if the target file is present.
+hdfsDeletePath :: HadoopSettings -> String -> IO ExitCode
+hdfsDeletePath HadoopSettings{..} p =
+    rawSystem hsBin ["fs", "-rmr", "-skipTrash", p]
 
 
 

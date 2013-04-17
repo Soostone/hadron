@@ -21,7 +21,7 @@ import           Hadoop.Streaming.Logger
 main :: IO ()
 main = do
     h <- openFile "hadoop.log" AppendMode
-    logTo h $ hadoopMain app def
+    logTo h $ hadoopMain app def def RSReRun
 
 
 source = tap "hdfs://localhost/user/cloudera/full_meta_4.csv.gz" idProtocol
