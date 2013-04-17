@@ -316,6 +316,7 @@ reducer MROptions{..} f = do
 
       logIn i = liftIO $ emitCounter "hadoop-streaming" "Reducer rows processed" every
       logConv i = liftIO $ emitCounter "hadoop-streaming" "Reducer object deserialized" every
+      logOut i = liftIO $ emitCounter "hadoop-streaming" "Reducer rows emitted" every
 
       every = 1
 
@@ -324,7 +325,8 @@ reducer MROptions{..} f = do
                performEvery every logIn =$=
                C.mapMaybe (_2 (firstOf mroPrism)) =$=
                performEvery every logConv =$=
-               go2
+               go2 =$=
+               performEvery every logOut
 
 
 
