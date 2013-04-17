@@ -124,6 +124,11 @@ emitCounter grp counter inc = B.hPutStrLn stderr txt
       txt = B.concat ["reporter:counter:", grp, ",", counter, ",", showBS inc]
 
 
+-- | Emit counter from this library's group
+hsEmitCounter :: B.ByteString -> Integer -> IO ()
+hsEmitCounter = emitCounter "hadoop-streaming"
+
+
 -- | Emit a status line
 emitStatus :: B.ByteString -> IO ()
 emitStatus msg = B.hPutStrLn stderr txt
@@ -229,10 +234,10 @@ mapper f = do
       conv (k,v) = B.concat [B.intercalate "\t" k, "\t", v, "\n"]
       every = 1
 
-      inLog fn i = liftIO $ emitCounter "hadoop-streaming" (B.concat ["Map input chunks: ", fn]) every
+      inLog fn i = liftIO $ hsEmitCounter (B.concat ["Map input chunks: ", fn]) every
       outLog fn i = do
-        liftIO $ emitCounter "hadoop-streaming" "Map rows emitted" every
-        liftIO $ emitCounter "hadoop-streaming" (B.concat ["Map emitted: ", fn]) every
+        liftIO $ hsEmitCounter "Map rows emitted" every
+        liftIO $ hsEmitCounter (B.concat ["Map emitted: ", fn]) every
 
 
 
@@ -314,9 +319,9 @@ reducer MROptions{..} f = do
                   sameKey (Just k)
 
 
-      logIn i = liftIO $ emitCounter "hadoop-streaming" "Reducer rows processed" every
-      logConv i = liftIO $ emitCounter "hadoop-streaming" "Reducer object deserialized" every
-      logOut i = liftIO $ emitCounter "hadoop-streaming" "Reducer rows emitted" every
+      logIn i = liftIO $ hsEmitCounter "Reducer rows processed" every
+      logConv i = liftIO $ hsEmitCounter "Reducer object deserialized" every
+      logOut i = liftIO $ hsEmitCounter "Reducer rows emitted" every
 
       every = 1
 
