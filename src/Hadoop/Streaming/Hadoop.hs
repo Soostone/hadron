@@ -102,6 +102,8 @@ data MRSettings = MRSettings {
     , mrsCodec     :: String
     }
 
+instance Default MRSettings where
+    def = MRSettings [] "" def Nothing Nothing False snappyCodec
 
 -- | A simple starting point to defining 'MRSettings'
 mrSettings
@@ -118,6 +120,9 @@ type Codec = String
 -------------------------------------------------------------------------------
 gzipCodec :: Codec
 gzipCodec = "org.apache.hadoop.io.compress.GzipCodec"
+
+snappyCodec :: String
+snappyCodec = "org.apache.hadoop.io.compress.SnappyCodec"
 
 
 type MapReduceKey = String

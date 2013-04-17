@@ -34,6 +34,7 @@ module Hadoop.Streaming.Controller
     -- * Command Line Entry Point
       hadoopMain
     , HadoopSettings (..)
+    , MRSettings (..)
     , clouderaDemo
     , amazonEMR
 
@@ -72,6 +73,7 @@ import           Control.Monad.State
 import           Control.Monad.Trans
 import qualified Data.ByteString.Char8     as B
 import           Data.Conduit
+import           Data.Conduit.Utils
 import           Data.Default
 import           Data.Hashable
 import qualified Data.HashMap.Strict       as HM
@@ -201,9 +203,10 @@ orchestrate
     :: (MonadIO m, MonadLogger m)
     => Controller a
     -> HadoopSettings
+    -> MRSettings
     -> ContState
     -> m (Either String a)
-orchestrate (Controller p) set s = evalStateT (runEitherT (go p)) s
+orchestrate (Controller p) set mrs s = evalStateT (runEitherT (go p)) s
     where
       go = eval . O.view
 
@@ -224,8 +227,9 @@ orchestrate (Controller p) set s = evalStateT (runEitherT (go p)) s
             go' = do
                 mrKey <- newMRKey
                 launchMapReduce set mrKey
-                  (mrSettings (map location inp) (location outp))
-                    { mrsPart = mroPart mro }
+                  mrs { mrsInput = map location inp
+                      , mrsOutput = location outp
+                      , mrsPart = mroPart mro }
 
 
 
@@ -239,12 +243,15 @@ hadoopMain
     :: forall m a. (MonadThrow m, MonadIO m, MonadLogger m)
     => Controller a
     -> HadoopSettings
+    -- ^ Base hadoop configuration
+    -> MRSettings
+    -- ^ Base 'MRSettings' - jobs will build on this.
     -> m ()
-hadoopMain c@(Controller p) hs = do
+hadoopMain c@(Controller p) hs mrs = do
     args <- liftIO getArgs
     case args of
       [] -> do
-        res <- orchestrate c hs def
+        res <- orchestrate c hs mrs def
         liftIO $ either print (const $ putStrLn "Success.") res
       [arg] -> do
         evalStateT (interpretWithMonad (go arg) p) def
@@ -262,21 +269,18 @@ hadoopMain c@(Controller p) hs = do
 
       go arg MakeTap = do
           tk <- liftIO $ mkRNG >>= randomToken 64
-          let loc = B.unpack $ B.concat ["hdfs://hadoop-streaming/temp/", tk]
+          let loc = B.unpack $ B.concat ["/tmp/hadoop-streaming/", tk]
           return $ Tap loc serProtocol
 
-      go arg (Connect (MapReduce mro mp rd ) inp outp) = do
+      go arg (Connect (MapReduce mro mp rd) inp outp) = do
           mrKey <- newMRKey
           case find ((== arg) . snd) $ mkArgs mrKey of
             Just (Map, _) -> do
               let inSer = proto $ head inp
-              lift $ $(logInfo) $ T.concat ["Mapper ", T.pack mrKey, " initializing."]
-              liftIO $ (mapperWith (mroPrism mro) $ protoDec inSer =$= mp)
-              lift $ $(logInfo) $ T.concat ["Mapper ", T.pack mrKey, " finished."]
+                  logIn i = liftIO $ hsEmitCounter "Map rows decoded"1
+              liftIO $ (mapperWith (mroPrism mro) $ protoDec inSer =$= performEvery 1 logIn =$= mp)
             Just (Reduce, _) -> do
-              lift $ $(logInfo) $ T.concat ["Reducer ", T.pack mrKey, " initializing."]
               liftIO $ (reducerMain mro rd (protoEnc $ proto outp))
-              lift $ $(logInfo) $ T.concat ["Reducer ", T.pack mrKey, " finished."]
             Nothing -> return ()
 
 
