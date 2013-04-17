@@ -1,15 +1,16 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RankNTypes        #-}
-{-# LANGUAGE RecordWildCards   #-}
+{-# LANGUAGE DeriveGeneric              #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE RankNTypes                 #-}
+{-# LANGUAGE RecordWildCards            #-}
 
 module Hadoop.Streaming.Join
     (
 
       DataDefs
-    , DataSet
+    , DataSet (..)
     , JoinType (..)
     , JoinKey
-
 
     , joinMain
     , joinMapper
@@ -30,13 +31,16 @@ import           Data.Conduit
 import qualified Data.Conduit.List       as C
 import           Data.Conduit.Utils
 import           Data.Default
+import           Data.Hashable
 import qualified Data.HashMap.Strict     as HM
 import           Data.List
 import           Data.Monoid
 import           Data.Ord
 import           Data.Serialize
+import           Data.String
 import qualified Data.Vector             as V
 import           Debug.Trace
+import           GHC.Generics
 import           System.Environment
 -------------------------------------------------------------------------------
 import           Hadoop.Streaming
@@ -52,7 +56,8 @@ data JoinType = JRequired | JOptional
   deriving (Eq,Show,Read,Ord)
 
 
-type DataSet = B.ByteString
+newtype DataSet = DataSet { getDataSet :: B.ByteString }
+  deriving (Eq,Show,Read,Ord,Serialize,Generic,Hashable,IsString)
 
 type JoinKey = B.ByteString
 
@@ -176,11 +181,11 @@ joinReduceStep fs buf@Buffering{..} (k, x) =
 
     -- | Accumulate until you start seeing the last table. We'll start
     -- emitting immediately after that.
-    case ds == lastDataSet of
+    case ds' == lastDataSet of
       False -> -- traceShow accumulate $
                return $! accumulate
       True ->
-        let fs' = filter ((/= ds) . fst) fs
+        let fs' = filter ((/= ds') . fst) fs
         in joinReduceStep fs (bufToStr fs' buf) (k,x)
 
     where
@@ -190,12 +195,13 @@ joinReduceStep fs buf@Buffering{..} (k, x) =
       lastDataSet = fst $ last fs'
 
       accumulate =
-          Buffering { bufData = HM.insertWith add ds [x] bufData
-                    , bufCurDS = Just ds
+          Buffering { bufData = HM.insertWith add ds' [x] bufData
+                    , bufCurDS = Just ds'
                     }
 
       add new old = new ++ old
       [jk, ds] = k
+      ds' = DataSet ds
 
 joinReduceStep _ str@Streaming{} (k,x) = emitStream str x >> return str
 
@@ -218,10 +224,10 @@ joinMapper getDS mkMap = do
       performEvery every (outLog ds) =$=
       C.map (go ds)
   where
-    inLog ds i = liftIO $ emitCounter "hadoop-streaming" (B.concat ["Map input dataset: ", ds]) every
-    outLog ds i = liftIO $ emitCounter "hadoop-streaming" (B.concat ["Map emit dataset: ", ds]) every
+    inLog ds i = liftIO $ emitCounter "hadoop-streaming" (B.concat ["Map input dataset: ", getDataSet ds]) every
+    outLog ds i = liftIO $ emitCounter "hadoop-streaming" (B.concat ["Map emit dataset: ", getDataSet ds]) every
     every = 1
-    go ds (jk, a) = ([jk, ds], a)
+    go ds (jk, a) = ([jk, getDataSet ds], a)
 
 
 

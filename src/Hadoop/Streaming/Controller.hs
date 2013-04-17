@@ -308,7 +308,7 @@ joinStep fs = MapReduce joinOpts mp rd
       showBS = B.pack . show
 
       names :: [(Location, DataSet)]
-      names = map (\ (i, loc) -> (loc, B.concat [showBS i, ":",  showBS $ hashWithSalt salt loc])) $ zip [0..] locations
+      names = map (\ (i, loc) -> (loc, DataSet $ B.concat [showBS i, ":",  showBS $ hashWithSalt salt loc])) $ zip [0..] locations
 
       nameIx :: M.Map Location DataSet
       nameIx = M.fromList names
@@ -321,7 +321,14 @@ joinStep fs = MapReduce joinOpts mp rd
       locations = map (location . view _1) fs
 
 
-      fs' = map (\(t, jt, cond) -> (B.pack . location $ t, jt)) fs
+      getTapDS :: Tap m a -> DataSet
+      getTapDS t =
+          fromMaybe (error "Can't identify dataset name for given location") $
+          M.lookup (location t) nameIx
+
+
+      fs' :: [(DataSet, JoinType)]
+      fs' = map (\(t, jt, cond) -> (getTapDS t, jt)) fs
 
 
       -- | get dataset name from a given input filename
