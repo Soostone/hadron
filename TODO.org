@@ -5,9 +5,9 @@
 
   - Make launchHadoop logging real-time
 
-  - Make and expose some common MROptions
-
   - Tie compression settings into main function
+
+  - Make and expose some common MROptions
 
   - Integrated check for whether target Tap exists - if so, skip the
     query and move onto next. If not, run the query.
@@ -17,6 +17,9 @@
 
   - Make a better CLI interface that can specify common hadoop
     settings (e.g. EMR vs. Cloudera)
+
+  - Use vector buffering with mutable growth (like in palgos) in joins
+    instead of linked lists
 
   - Add built-in, common reducers, mappers, etc.
 
