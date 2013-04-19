@@ -17,7 +17,6 @@ import           Data.List
 import           Data.Map               ((!))
 import           Data.Monoid
 import           Hadoop.Streaming
-import           Hadoop.Streaming.Join
 import           Safe
 import           System.Environment
 import           System.IO
@@ -25,11 +24,11 @@ import           System.IO
 
 
 
-mro = MROptions (==) def pSerialize
+mro = MROptions (==) def pSerialize pShow
 
 
 main :: IO ()
-main = mapReduceMain mro mapper' reducer' (protoEnc showProtocol)
+main = mapReduceMain mro mapper' reducer'
 
 mapper' = linesConduit =$= C.map (\_ -> (["cnt"], (1 :: Int)))
 

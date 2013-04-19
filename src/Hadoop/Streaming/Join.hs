@@ -120,8 +120,8 @@ emitStream Streaming{..} a = V.mapM_ (yield . mappend a) strStems
 emitStream _ _ = error "emitStream can't be called unless it's in Streaming mode."
 
 -------------------------------------------------------------------------------
-joinOpts :: Serialize a => MROptions a
-joinOpts = MROptions eq (Partition 2 1) pSerialize
+joinOpts :: Serialize a => Prism' B.ByteString r -> MROptions a r
+joinOpts p = MROptions eq (Partition 2 1) pSerialize p
     where
       eq [a1,a2] [b1,b2] = a1 == b1
 
@@ -224,8 +224,10 @@ joinMapper getDS mkMap = do
       performEvery every (outLog ds) =$=
       C.map (go ds)
   where
-    inLog ds i = liftIO $ emitCounter "hadoop-streaming" (B.concat ["Map input dataset: ", getDataSet ds]) every
-    outLog ds i = liftIO $ emitCounter "hadoop-streaming" (B.concat ["Map emit dataset: ", getDataSet ds]) every
+    inLog ds i = liftIO $ hsEmitCounter
+                 (B.concat ["Map input dataset: ", getDataSet ds]) every
+    outLog ds i = liftIO $ hsEmitCounter
+                  (B.concat ["Map emit dataset: ", getDataSet ds]) every
     every = 1
     go ds (jk, a) = ([jk, getDataSet ds], a)
 
@@ -238,7 +240,8 @@ joinMapper getDS mkMap = do
 
 -------------------------------------------------------------------------------
 joinMain
-    :: (MonadIO m, Serialize r, Monoid r, MonadThrow m, Show r)
+    :: (MonadIO m, MonadThrow m, MonadUnsafeIO m,
+        Serialize r, Monoid r, Show r)
     => DataDefs
     -- ^ Define your tables
     -> (String -> DataSet)
@@ -246,10 +249,10 @@ joinMain
     -> (DataSet -> Conduit B.ByteString m (JoinKey, r))
     -- ^ Map input stream to a join key and the common-denominator
     -- uniform data type we know how to 'mconcat'.
-    -> Conduit r m B.ByteString
+    -> Prism' B.ByteString r
     -- ^ Choose serialization method for final output.
     -> m ()
-joinMain fs getDS mkMap out = mapReduceMain joinOpts mp rd out
+joinMain fs getDS mkMap out = mapReduceMain (joinOpts out) mp rd
     where
 
       mp = joinMapper getDS mkMap

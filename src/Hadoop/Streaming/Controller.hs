@@ -97,7 +97,7 @@ import           Hadoop.Streaming.Logger
 -------------------------------------------------------------------------------
 -- | A packaged MapReduce step
 data MapReduce a m b = forall v. MapReduce {
-      mrOptions :: MROptions v
+      mrOptions :: MROptions v b
     , mrMapper  :: Mapper a m v
     , mrReducer :: Reducer v m b
     }
@@ -105,6 +105,7 @@ data MapReduce a m b = forall v. MapReduce {
 
 -- | The hadoop-understandable location of a datasource
 type Location = String
+
 
 -- | Tap is a data source definition that *knows* how to serve records
 -- of tupe 'a'.
@@ -144,6 +145,7 @@ makeLenses ''ContState
 
 
 
+-------------------------------------------------------------------------------
 data ConI a where
     Connect :: forall i o. MapReduce i IO o
             -> [Tap IO i] -> Tap IO o
@@ -190,6 +192,7 @@ io :: IO a -> Controller a
 io f = Controller $ singleton $ ConIO f
 
 
+-------------------------------------------------------------------------------
 newMRKey :: MonadState ContState m => m String
 newMRKey = do
     i <- gets _csMRCount
@@ -232,10 +235,13 @@ orchestrate (Controller p) set mrs rr s = evalStateT (runEitherT (go p)) s
                   False -> go''
                   True ->
                     case rr of
-                      RSFail -> lift $ $(logError) $ T.concat ["Destination file exists: ", T.pack (location outp)]
+                      RSFail -> lift $ $(logError) $ T.concat
+                        ["Destination file exists: ", T.pack (location outp)]
                       RSSkip -> go''
                       RSReRun -> do
-                        lift $ $(logInfo) $ T.pack ("Destination file exists, will delete and rerun: " ++ location outp)
+                        lift $ $(logInfo) $ T.pack $
+                          "Destination file exists, will delete and rerun: " ++
+                          location outp
                         liftIO $ hdfsDeletePath set (location outp)
                         go''
             go'' = do
@@ -308,9 +314,10 @@ hadoopMain c@(Controller p) hs mrs rr = do
             Just (Map, _) -> do
               let inSer = proto $ head inp
                   logIn i = liftIO $ hsEmitCounter "Map rows decoded" 1
-              liftIO $ (mapperWith (mroPrism mro) $ protoDec inSer =$= performEvery 1 logIn =$= mp)
+              liftIO $ (mapperWith (mroInPrism mro) $
+                protoDec inSer =$= performEvery 1 logIn =$= mp)
             Just (Reduce, _) -> do
-              liftIO $ (reducerMain mro rd (protoEnc $ proto outp))
+              liftIO $ (reducerMain mro rd)
             Nothing -> return ()
 
 
@@ -331,18 +338,20 @@ data JoinDef m b = forall a. JoinDef {
 -- single data type.
 joinStep
     :: forall m b a. (Show b, MonadThrow m, Monoid b, MonadIO m,
-        Serialize b)
-   => [(Tap m a, JoinType, Conduit a m (JoinKey, b))]
-    -- => [JoinDef m b]
+                      Serialize b)
+    => [(Tap m a, JoinType, Conduit a m (JoinKey, b))]
     -- ^ Dataset definitions and how to map each dataset.
+    -> Prism' B.ByteString b
+    -- ^ How to serialize the output from step
     -> MapReduce a m b
-joinStep fs = MapReduce joinOpts mp rd
+joinStep fs out = MapReduce (joinOpts out) mp rd
     where
       salt = 0
       showBS = B.pack . show
 
       names :: [(Location, DataSet)]
-      names = map (\ (i, loc) -> (loc, DataSet $ B.concat [showBS i, ":",  showBS $ hashWithSalt salt loc])) $ zip [0..] locations
+      names = map (\ (i, loc) -> (loc, DataSet $ B.concat [showBS i, ":",  showBS $ hashWithSalt salt loc])) $
+              zip [0..] locations
 
       nameIx :: M.Map Location DataSet
       nameIx = M.fromList names
@@ -362,7 +371,7 @@ joinStep fs = MapReduce joinOpts mp rd
 
 
       fs' :: [(DataSet, JoinType)]
-      fs' = map (\(t, jt, cond) -> (getTapDS t, jt)) fs
+      fs' = map (\ (t, jt, cond) -> (getTapDS t, jt)) fs
 
 
       -- | get dataset name from a given input filename

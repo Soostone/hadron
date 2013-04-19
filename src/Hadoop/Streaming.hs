@@ -74,6 +74,7 @@ module Hadoop.Streaming
 
 
 -------------------------------------------------------------------------------
+import           Blaze.ByteString.Builder
 import           Control.Applicative
 import           Control.Arrow
 import           Control.Category
@@ -87,11 +88,14 @@ import qualified Data.ByteString.Char8            as B
 import           Data.Conduit
 import           Data.Conduit.Attoparsec
 import           Data.Conduit.Binary              (sinkHandle, sourceHandle)
+import           Data.Conduit.Blaze
 import qualified Data.Conduit.List                as C
 import           Data.Conduit.Utils
 import           Data.CSV.Conduit
 import           Data.Default
+import           Data.List
 import qualified Data.Map                         as M
+import           Data.Monoid
 import qualified Data.Serialize                   as Ser
 import           Options.Applicative              hiding (Parser)
 import           Prelude                          hiding (id, (.))
@@ -151,7 +155,7 @@ parseLine = ln <* endOfLine
     where
       ln = do
         x <- takeTill (== '\n')
-        return $ if B.last x == '\t'
+        return $ if B.length x > 0 && B.last x == '\t'
           then B.init x
           else x
 
@@ -170,42 +174,16 @@ lineC n = linesConduit =$= C.map ppair
           where
             k = take n spl
             v = B.intercalate "\t" $ drop n spl
+            -- ^ Re-assemble remaining segments to restore
+            -- correctness.
             spl = B.split '\t' line
 
 
 
--------------------------------------------------------------------------------
-mapReduce
-    :: (MonadIO m, MonadThrow m)
-    => MROptions a
-    -> Mapper B.ByteString m a
-    -> Reducer a m b
-    -> Conduit b m B.ByteString
-    -- ^ A final output serializer
-    -> (m (), m ())
-mapReduce mro f g out = (mp, rd)
-    where
-      mp = mapperWith (mroPrism mro) f
-      rd = reducerMain mro g out
-
-
--------------------------------------------------------------------------------
--- | Build a main function entry point for a reducer.
-reducerMain
-    :: (MonadIO m, MonadThrow m)
-    => MROptions a
-    -> Reducer a m r
-    -> Conduit r m B.ByteString
-    -> m ()
-reducerMain mro g out =
-    reducer mro g $=
-    out $=
-    C.mapM_ emitOutput $$
-    C.sinkNull
-
-
 -- | Use this whenever you want to emit a line to the output as part
 -- of the current stage, whether your mapping or reducing.
+--
+-- Note that we don't append a newline, you have to do that.
 emitOutput :: MonadIO m => B.ByteString -> m ()
 emitOutput bs = liftIO $ B.hPutStr stdout bs
 
@@ -215,43 +193,6 @@ getFileName :: MonadIO m => m String
 getFileName = liftIO $ getEnv "map_input_file"
 
 
--- | Construct a mapper program using given serialization Prism.
-mapperWith
-    :: MonadIO m
-    => Prism' B.ByteString t
-    -> Conduit B.ByteString m ([Key], t)
-    -> m ()
-mapperWith p f = mapper $ f =$= C.mapMaybe conv
-    where
-      conv x = _2 (firstOf (re p)) x
-
-
-truncEnd n = B.reverse . B.take n . B.reverse
-
--- | Construct a mapper program using a given Conduit.
-mapper :: MonadIO m => Conduit B.ByteString m ([Key], B.ByteString) -> m ()
-mapper f = do
-    liftIO $ hSetBuffering stderr LineBuffering
-    liftIO $ hSetBuffering stdout LineBuffering
-    liftIO $ hSetBuffering stdin LineBuffering
-    fn <- (truncEnd 40 . B.pack) `liftM` getFileName
-    sourceHandle stdin =$=
-      performEvery every (inLog fn) =$=
-      f =$=
-      performEvery every (outLog fn) =$=
-      C.map conv $$
-      sinkHandle stdout
-    where
-      conv (k,v) = B.concat [B.intercalate "\t" k, "\t", v, "\n"]
-      every = 1
-
-      inLog fn i = liftIO $ hsEmitCounter "Map input chunks" every
-      outLog fn i = do
-        liftIO $ hsEmitCounter "Map emitted rows" every
-        -- liftIO $ hsEmitCounter (B.concat ["Map emitted: ", fn]) every
-
-
-
 type CompositeKey   = [B.ByteString]
 
 
@@ -259,22 +200,6 @@ type CompositeKey   = [B.ByteString]
 -- | A 'Mapper' parses and converts the unbounded incoming stream of
 -- input into a stream of (key, value) pairs.
 type Mapper a m b     = Conduit a m ([Key], b)
-
-
-data MROptions a = MROptions {
-      mroEq    :: ([Key] -> [Key] -> Bool)
-    -- ^ An equivalence test for incoming keys. True means given two
-    -- keys are part of the same reduce series.
-    , mroPart  :: PartitionStrategy
-    -- ^ Number of segments to expect in incoming keys.
-    , mroPrism :: Prism' B.ByteString a
-    -- ^ A serialization scheme for the incoming values.
-    }
-
-
-
-instance Default (MROptions B.ByteString) where
-    def = MROptions (==) def id
 
 
 -------------------------------------------------------------------------------
@@ -290,11 +215,97 @@ instance Default (MROptions B.ByteString) where
 type Reducer a m r  = Conduit (CompositeKey, a) m r
 
 
+-------------------------------------------------------------------------------
+-- | Options for an MR job with internal value a and final output b.
+data MROptions a b = MROptions {
+      mroEq       :: ([Key] -> [Key] -> Bool)
+    -- ^ An equivalence test for incoming keys. True means given two
+    -- keys are part of the same reduce series.
+    , mroPart     :: PartitionStrategy
+    -- ^ Number of segments to expect in incoming keys.
+    , mroInPrism  :: Prism' B.ByteString a
+    -- ^ A serialization scheme for values between the map-reduce
+    -- steps.
+    , mroOutPrism :: Prism' B.ByteString b
+    }
+
+
+
+-- | Construct a mapper program using given serialization Prism.
+mapperWith
+    :: (MonadIO m, MonadUnsafeIO m)
+    => Prism' B.ByteString t
+    -> Conduit B.ByteString m ([Key], t)
+    -> m ()
+mapperWith p f = mapper $ f =$= C.mapMaybe conv
+    where
+      conv x = _2 (firstOf (re p)) x
+
+
+truncEnd n = B.reverse . B.take n . B.reverse
+
+
+-- | Construct a mapper program using a given low-level conduit.
+mapper
+    :: (MonadIO m, MonadUnsafeIO m)
+    => Conduit B.ByteString m ([Key], B.ByteString)
+    -- ^ A key/value producer - don't worry about putting any newline
+    -- endings yourself.
+    -> m ()
+mapper f = do
+    liftIO $ hSetBuffering stderr LineBuffering
+    liftIO $ hSetBuffering stdout LineBuffering
+    liftIO $ hSetBuffering stdin LineBuffering
+    sourceHandle stdin =$=
+      performEvery every inLog =$=
+      f =$=
+      performEvery every outLog =$=
+      C.map conv =$=
+      builderToByteString $$
+      sinkHandle stdout
+    where
+      conv (k,v) = mconcat
+        [ mconcat (intersperse tab (map fromByteString k))
+        , tab
+        , fromByteString v
+        , nl ]
+
+      tab = fromByteString "\t"
+      nl = fromByteString "\n"
+      every = 1
+
+      inLog i = liftIO $ hsEmitCounter "Map input chunks" every
+      outLog i = do
+        liftIO $ hsEmitCounter "Map emitted rows" every
+        -- liftIO $ hsEmitCounter (B.concat ["Map emitted: ", fn]) every
+
+
+
+-------------------------------------------------------------------------------
+-- | Build a main function entry point for a reducer.
+reducerMain
+    :: (MonadIO m, MonadThrow m, MonadUnsafeIO m)
+    => MROptions a r
+    -> Reducer a m r
+    -> m ()
+reducerMain mro@MROptions{..} g =
+    reducer mro g $=
+    C.mapMaybe (firstOf (re mroOutPrism)) $=
+    C.map write $=
+    builderToByteString $=
+    C.mapM_ emitOutput $$
+    C.sinkNull
+  where
+    write x = fromByteString x `mappend` nl
+    nl = fromByteString "\n"
+
+
+
 -- | An easy way to construct a reducer pogram. Just supply the
 -- arguments and you're done.
 reducer
     :: (MonadIO m, MonadThrow m)
-    => MROptions a
+    => MROptions a r
     -> Reducer a m r
     -- ^ A step function for the given key.
     -> Source m r
@@ -339,7 +350,7 @@ reducer MROptions{..} f = do
       stream = sourceHandle stdin =$=
                lineC (numSegs mroPart) =$=
                performEvery every logIn =$=
-               C.mapMaybe (_2 (firstOf mroPrism)) =$=
+               C.mapMaybe (_2 (firstOf mroInPrism)) =$=
                performEvery every logConv =$=
                go2 =$=
                performEvery every logOut
@@ -373,12 +384,21 @@ instance Monad m => Category (Protocol m) where
 
 
 -- | Lift 'Prism' to work with a newline-separated stream of objects.
-prismToProtocol :: MonadThrow m => Prism' B.ByteString a -> Protocol' m a
+--
+-- It is assumed that the prism you supply to this function do not add
+-- newlines themselves. You need to make them newline-free for this to
+-- work properly.
+prismToProtocol
+    :: (MonadUnsafeIO m, MonadThrow m)
+    => Prism' B.ByteString a
+    -> Protocol' m a
 prismToProtocol p =
-    Protocol { protoEnc = C.mapMaybe enc
+    Protocol { protoEnc = C.mapMaybe (firstOf (re p)) =$= write
              , protoDec = linesConduit =$= C.mapMaybe (firstOf p) }
   where
-    enc = liftM (\x -> B.concat [x, "\n"]) . firstOf (re p)
+    write = C.map (\x -> fromByteString x `mappend` nl) =$=
+            builderToByteString
+    nl = fromByteString "\n"
 
 
 -------------------------------------------------------------------------------
@@ -397,13 +417,15 @@ linesProtocol = Protocol { protoEnc = C.map (\x -> B.concat [x, "\n"])
 -------------------------------------------------------------------------------
 -- | Channel the 'Serialize' instance through 'Base64' encoding to
 -- make it newline-safe, then turn into newline-separated stream.
-serProtocol :: (MonadThrow m, Ser.Serialize a) => Protocol' m a
+serProtocol :: (MonadUnsafeIO m, MonadThrow m, Ser.Serialize a)
+            => Protocol' m a
 serProtocol = prismToProtocol pSerialize
 
 
 -------------------------------------------------------------------------------
 -- | Protocol for converting to/from any stream type 'b' and CSV type 'a'.
-csvProtocol :: (MonadThrow m, CSV b a) => CSVSettings -> Protocol m b a
+csvProtocol :: (MonadUnsafeIO m, MonadThrow m, CSV b a)
+            => CSVSettings -> Protocol m b a
 csvProtocol set = Protocol (fromCSV set) (intoCSV set)
 
 
@@ -414,7 +436,8 @@ csvProtocol set = Protocol (fromCSV set) (intoCSV set)
 --
 -- This is meant for debugging more than anything. Do not use it in
 -- serious matters. Use 'serProtocol' instead.
-showProtocol :: (MonadThrow m, Read a, Show a) => Protocol' m a
+showProtocol :: (MonadUnsafeIO m, MonadThrow m, Read a, Show a)
+             => Protocol' m a
 showProtocol = prismToProtocol pShow
 
 
@@ -446,23 +469,34 @@ pShow = prism
 
 
 
+-------------------------------------------------------------------------------
+mapReduce
+    :: (MonadIO m, MonadThrow m, MonadUnsafeIO m)
+    => MROptions a r
+    -> Mapper B.ByteString m a
+    -> Reducer a m r
+    -> (m (), m ())
+mapReduce mro f g = (mp, rd)
+    where
+      mp = mapperWith (mroInPrism mro) f
+      rd = reducerMain mro g
+
+
 
 -- | A default main that will respond to 'map' and 'reduce' commands
 -- to run the right phase appropriately.
 --
 -- This is the recommended approach to designing a map-reduce program.
 mapReduceMain
-    :: (MonadIO m, MonadThrow m)
-    => MROptions a
+    :: (MonadIO m, MonadThrow m, MonadUnsafeIO m)
+    => MROptions a r
     -> Mapper B.ByteString m a
     -> Reducer a m r
     -- ^ Reducer for a stream of values belonging to the same key.
-    -> Conduit r m B.ByteString
-    -- ^ A final serialization function.
     -> m ()
-mapReduceMain mro f g out = liftIO (execParser opts) >>= run
+mapReduceMain mro f g = liftIO (execParser opts) >>= run
   where
-    (mp,rd) = mapReduce mro f g out
+    (mp,rd) = mapReduce mro f g
 
     run Map = mp
     run Reduce = rd

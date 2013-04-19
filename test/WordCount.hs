@@ -15,10 +15,10 @@ import           Hadoop.Streaming
 -------------------------------------------------------------------------------
 
 main :: IO ()
-main = mapReduceMain mro mapper' reducer' (fromCSV def)
+main = mapReduceMain mro mapper' reducer'
 
 
-mro = MROptions (==) 1 pSerialize
+mro = MROptions (==) def pSerialize pShow
 
 
 mapper' = linesConduit =$= C.concatMap f
