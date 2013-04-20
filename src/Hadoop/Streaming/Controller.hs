@@ -360,8 +360,8 @@ data JoinDef m b = forall a. JoinDef {
 -- | A convenient way to express multi-way join operations into a
 -- single data type.
 joinStep
-    :: forall m b a. (Show b, MonadThrow m, Monoid b, MonadIO m,
-                      Serialize b)
+    :: forall m b a. (MonadIO m, MonadThrow m,
+                      Show b, Monoid b, Serialize b)
     => [(Tap m a, JoinType, Conduit a m (JoinKey, b))]
     -- ^ Dataset definitions and how to map each dataset.
     -> MapReduce a m b

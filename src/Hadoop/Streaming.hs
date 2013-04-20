@@ -250,7 +250,7 @@ mapper
     :: (MonadIO m, MonadUnsafeIO m)
     => Conduit B.ByteString m ([Key], B.ByteString)
     -- ^ A key/value producer - don't worry about putting any newline
-    -- endings yourself.
+    -- endings yourself, we do that for you.
     -> m ()
 mapper f = do
     liftIO $ hSetBuffering stderr LineBuffering
@@ -288,16 +288,19 @@ reducerMain
     :: (MonadIO m, MonadThrow m, MonadUnsafeIO m)
     => MROptions a
     -> Reducer a m B.ByteString
+    -- ^ Important: It is assumed that each 'ByteString' here will end
+    -- (your responsibility) with a newline, therefore constituting a
+    -- line for the Hadoop ecosystem.
     -> m ()
 reducerMain mro@MROptions{..} g =
     reducer mro g $=
-    C.map write $=
-    builderToByteString $=
+    -- C.map write $=
+    -- builderToByteString $=
     C.mapM_ emitOutput $$
     C.sinkNull
-  where
-    write x = fromByteString x `mappend` nl
-    nl = fromByteString "\n"
+  -- where
+    -- write x = fromByteString x `mappend` nl
+    -- nl = fromByteString "\n"
 
 
 

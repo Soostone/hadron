@@ -123,7 +123,7 @@ joinOpts = MROptions eq (Partition 2 1) pSerialize
 -------------------------------------------------------------------------------
 -- | Make join reducer from given table definitions
 joinReducer
-    :: (Show r, Monoid r, MonadIO m, MonadThrow m, Serialize r)
+    :: (Show r, Monoid r, MonadIO m, MonadThrow m)
     => [(DataSet, JoinType)]
     -- ^ Table definitions
     -> Reducer r m r
