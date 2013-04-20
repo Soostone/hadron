@@ -18,8 +18,6 @@ import           System.Environment
 import           System.IO
 import           System.Log.FastLogger
 import           System.Posix.Process
-import           System.Posix.Types
-import           Text.Printf
 -------------------------------------------------------------------------------
 
 

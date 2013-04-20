@@ -41,12 +41,10 @@ import           Control.Monad.Logger
 import           Control.Monad.Trans
 import           Data.Default
 import           Data.List
-import qualified Data.Text               as T
+import qualified Data.Text            as T
 import           System.Environment
 import           System.Exit
 import           System.Process
--------------------------------------------------------------------------------
-import           Hadoop.Streaming.Logger
 -------------------------------------------------------------------------------
 
 

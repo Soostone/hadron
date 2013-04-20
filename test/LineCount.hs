@@ -24,7 +24,7 @@ import           System.IO
 
 
 
-mro = MROptions (==) def pSerialize pShow
+mro = MROptions (==) def pSerialize
 
 
 main :: IO ()
@@ -34,7 +34,7 @@ mapper' = linesConduit =$= C.map (\_ -> (["cnt"], (1 :: Int)))
 
 reducer' = do
   i <- C.fold (\ acc (_, x) -> x + acc) 0
-  yield i
+  yield $ B.pack $ show i
 
 
 

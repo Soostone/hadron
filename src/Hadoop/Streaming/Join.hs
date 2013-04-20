@@ -26,28 +26,23 @@ module Hadoop.Streaming.Join
 -------------------------------------------------------------------------------
 import           Control.Lens
 import           Control.Monad.Trans
-import qualified Data.ByteString.Char8   as B
+import qualified Data.ByteString.Char8 as B
 import           Data.Conduit
-import qualified Data.Conduit.List       as C
+import qualified Data.Conduit.List     as C
 import           Data.Conduit.Utils
 import           Data.Default
 import           Data.Hashable
-import qualified Data.HashMap.Strict     as HM
+import qualified Data.HashMap.Strict   as HM
 import           Data.List
 import           Data.Monoid
 import           Data.Ord
 import           Data.Serialize
 import           Data.String
-import qualified Data.Vector             as V
-import           Debug.Trace
+import qualified Data.Vector           as V
 import           GHC.Generics
-import           System.Environment
 -------------------------------------------------------------------------------
 import           Hadoop.Streaming
-import           Hadoop.Streaming.Hadoop
 -------------------------------------------------------------------------------
-
-
 
 
 type DataDefs = [(DataSet, JoinType)]
@@ -62,16 +57,14 @@ newtype DataSet = DataSet { getDataSet :: B.ByteString }
 type JoinKey = B.ByteString
 
 
+-- | We are either buffering input rows or have started streaming, as
+-- we think we're now receiving the last table we were expecting.
 data JoinAcc a =
     Buffering {
-      bufData  :: ! (HM.HashMap DataSet [a])
+      bufData :: ! (HM.HashMap DataSet [a])
     -- ^ Buffer of in-memory retained data. We have to retain (n-1) of
     -- the input datasets and we can then start emitting rows in
     -- constant-space for the nth dataset.
-    , bufCurDS :: Maybe DataSet
-    -- ^ DataSet we are currently streaming for the current JoinKey
-    -- , bufDoneDS :: V.Vector DataSet
-    -- ^ List of datasets done streaming for the current JoinKey
     }
     | Streaming { strStems :: V.Vector a }
 
@@ -79,7 +72,7 @@ data JoinAcc a =
 
 
 instance Default (JoinAcc a) where
-    def = Buffering mempty Nothing -- mempty
+    def = Buffering mempty
 
 
 
@@ -105,7 +98,7 @@ bufToStr defs Buffering{..} = Streaming rs
 
       data' = foldl' step bufData defs
 
-      step m (ds, JRequired) = m
+      step m (_, JRequired) = m
       step m (ds, JOptional) = HM.insertWith insMissing ds [mempty] m
 
       insMissing new [] = new
@@ -120,10 +113,11 @@ emitStream Streaming{..} a = V.mapM_ (yield . mappend a) strStems
 emitStream _ _ = error "emitStream can't be called unless it's in Streaming mode."
 
 -------------------------------------------------------------------------------
-joinOpts :: Serialize a => Prism' B.ByteString r -> MROptions a r
-joinOpts p = MROptions eq (Partition 2 1) pSerialize p
+joinOpts :: Serialize a => MROptions a
+joinOpts = MROptions eq (Partition 2 1) pSerialize
     where
-      eq [a1,a2] [b1,b2] = a1 == b1
+      eq [a1,_] [b1,_] = a1 == b1
+      eq _ _ = error "joinOpts equality received an unexpected pattern"
 
 
 -------------------------------------------------------------------------------
@@ -179,7 +173,7 @@ joinReduceStep
     -> ConduitM i b m (JoinAcc b)
 joinReduceStep fs buf@Buffering{..} (k, x) =
 
-    -- | Accumulate until you start seeing the last table. We'll start
+    -- Accumulate until you start seeing the last table. We'll start
     -- emitting immediately after that.
     case ds' == lastDataSet of
       False -> -- traceShow accumulate $
@@ -196,14 +190,13 @@ joinReduceStep fs buf@Buffering{..} (k, x) =
 
       accumulate =
           Buffering { bufData = HM.insertWith add ds' [x] bufData
-                    , bufCurDS = Just ds'
                     }
 
       add new old = new ++ old
-      [jk, ds] = k
+      [_, ds] = k
       ds' = DataSet ds
 
-joinReduceStep _ str@Streaming{} (k,x) = emitStream str x >> return str
+joinReduceStep _ str@Streaming{} (_,x) = emitStream str x >> return str
 
 
 -- | Helper for easy construction of specialized join mapper.
@@ -224,9 +217,9 @@ joinMapper getDS mkMap = do
       performEvery every (outLog ds) =$=
       C.map (go ds)
   where
-    inLog ds i = liftIO $ hsEmitCounter
+    inLog ds _ = liftIO $ hsEmitCounter
                  (B.concat ["Map input dataset: ", getDataSet ds]) every
-    outLog ds i = liftIO $ hsEmitCounter
+    outLog ds _ = liftIO $ hsEmitCounter
                   (B.concat ["Map emit dataset: ", getDataSet ds]) every
     every = 1
     go ds (jk, a) = ([jk, getDataSet ds], a)
@@ -239,6 +232,10 @@ joinMapper getDS mkMap = do
 
 
 -------------------------------------------------------------------------------
+-- | Make a stand-alone program that can act as a mapper and reducer,
+-- performing the join defined here.
+--
+-- For proper higher level operation, see the 'Controller' module.
 joinMain
     :: (MonadIO m, MonadThrow m, MonadUnsafeIO m,
         Serialize r, Monoid r, Show r)
@@ -252,9 +249,9 @@ joinMain
     -> Prism' B.ByteString r
     -- ^ Choose serialization method for final output.
     -> m ()
-joinMain fs getDS mkMap out = mapReduceMain (joinOpts out) mp rd
+joinMain fs getDS mkMap out = mapReduceMain joinOpts mp rd
     where
 
       mp = joinMapper getDS mkMap
 
-      rd = joinReducer fs
+      rd = joinReducer fs =$= C.mapMaybe (firstOf (re out))

@@ -65,19 +65,16 @@ module Hadoop.Streaming.Controller
 
 -------------------------------------------------------------------------------
 import           Control.Applicative
-import           Control.Concurrent
 import           Control.Error
 import           Control.Lens
 import           Control.Monad.Operational hiding (view)
 import qualified Control.Monad.Operational as O
 import           Control.Monad.State
-import           Control.Monad.Trans
 import qualified Data.ByteString.Char8     as B
 import           Data.Conduit
 import           Data.Conduit.Utils
 import           Data.Default
 import           Data.Hashable
-import qualified Data.HashMap.Strict       as HM
 import           Data.List
 import qualified Data.Map                  as M
 import           Data.Monoid
@@ -97,7 +94,7 @@ import           Hadoop.Streaming.Logger
 -------------------------------------------------------------------------------
 -- | A packaged MapReduce step
 data MapReduce a m b = forall v. MapReduce {
-      mrOptions :: MROptions v b
+      mrOptions :: MROptions v
     , mrMapper  :: Mapper a m v
     , mrReducer :: Reducer v m b
     }
@@ -301,9 +298,9 @@ hadoopMain c@(Controller p) hs mrs rr = do
 
       go :: String -> ConI b -> StateT ContState m b
 
-      go arg (ConIO _) = return $ error "You tried to use the result of an IO action during Map-Reduce operation. That's illegal."
+      go _ (ConIO _) = return $ error "You tried to use the result of an IO action during Map-Reduce operation. That's illegal."
 
-      go arg MakeTap = do
+      go _ MakeTap = do
           tk <- liftIO $ mkRNG >>= randomToken 64
           let loc = B.unpack $ B.concat ["/tmp/hadoop-streaming/", tk]
           return $ Tap loc serProtocol
@@ -313,11 +310,13 @@ hadoopMain c@(Controller p) hs mrs rr = do
           case find ((== arg) . snd) $ mkArgs mrKey of
             Just (Map, _) -> do
               let inSer = proto $ head inp
-                  logIn i = liftIO $ hsEmitCounter "Map rows decoded" 1
+                  logIn _ = liftIO $ hsEmitCounter "Map rows decoded" 1
               liftIO $ (mapperWith (mroInPrism mro) $
                 protoDec inSer =$= performEvery 1 logIn =$= mp)
             Just (Reduce, _) -> do
-              liftIO $ (reducerMain mro rd)
+              let outSer = proto outp
+                  rd' = rd =$= protoEnc outSer
+              liftIO $ (reducerMain mro rd')
             Nothing -> return ()
 
 
@@ -341,10 +340,8 @@ joinStep
                       Serialize b)
     => [(Tap m a, JoinType, Conduit a m (JoinKey, b))]
     -- ^ Dataset definitions and how to map each dataset.
-    -> Prism' B.ByteString b
-    -- ^ How to serialize the output from step
     -> MapReduce a m b
-joinStep fs out = MapReduce (joinOpts out) mp rd
+joinStep fs = MapReduce joinOpts mp rd
     where
       salt = 0
       showBS = B.pack . show
@@ -371,7 +368,7 @@ joinStep fs out = MapReduce (joinOpts out) mp rd
 
 
       fs' :: [(DataSet, JoinType)]
-      fs' = map (\ (t, jt, cond) -> (getTapDS t, jt)) fs
+      fs' = map (\ (t, jt, _) -> (getTapDS t, jt)) fs
 
 
       -- | get dataset name from a given input filename

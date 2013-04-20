@@ -6,6 +6,7 @@
 {-# LANGUAGE OverloadedStrings         #-}
 {-# LANGUAGE RankNTypes                #-}
 {-# LANGUAGE RecordWildCards           #-}
+
 -----------------------------------------------------------------------------
 -- |
 -- Module      :  Hadoop.Streaming
@@ -16,16 +17,19 @@
 -- Stability   :  experimental
 --
 -- Low level building blocks for working with Hadoop streaming.
+--
+-- We define all the base types for MapReduce and export map/reduce
+-- maker functions that know how to deal with ByteString input and
+-- output.
 ----------------------------------------------------------------------------
-
 
 module Hadoop.Streaming
     (
       -- * Types
 
-      Key (..)
+      Key
     , CompositeKey
-    , Value (..)
+    , Value
     , Mapper
     , Reducer
 
@@ -76,13 +80,11 @@ module Hadoop.Streaming
 -------------------------------------------------------------------------------
 import           Blaze.ByteString.Builder
 import           Control.Applicative
-import           Control.Arrow
 import           Control.Category
 import           Control.Lens
 import           Control.Monad
 import           Control.Monad.Trans
-import           Data.Attoparsec.ByteString.Char8 (Parser (..), endOfLine,
-                                                   takeTill)
+import           Data.Attoparsec.ByteString.Char8 (Parser, endOfLine, takeTill)
 import qualified Data.ByteString.Base64           as Base64
 import qualified Data.ByteString.Char8            as B
 import           Data.Conduit
@@ -92,9 +94,7 @@ import           Data.Conduit.Blaze
 import qualified Data.Conduit.List                as C
 import           Data.Conduit.Utils
 import           Data.CSV.Conduit
-import           Data.Default
 import           Data.List
-import qualified Data.Map                         as M
 import           Data.Monoid
 import qualified Data.Serialize                   as Ser
 import           Options.Applicative              hiding (Parser)
@@ -217,16 +217,15 @@ type Reducer a m r  = Conduit (CompositeKey, a) m r
 
 -------------------------------------------------------------------------------
 -- | Options for an MR job with internal value a and final output b.
-data MROptions a b = MROptions {
-      mroEq       :: ([Key] -> [Key] -> Bool)
+data MROptions a = MROptions {
+      mroEq      :: ([Key] -> [Key] -> Bool)
     -- ^ An equivalence test for incoming keys. True means given two
     -- keys are part of the same reduce series.
-    , mroPart     :: PartitionStrategy
+    , mroPart    :: PartitionStrategy
     -- ^ Number of segments to expect in incoming keys.
-    , mroInPrism  :: Prism' B.ByteString a
+    , mroInPrism :: Prism' B.ByteString a
     -- ^ A serialization scheme for values between the map-reduce
     -- steps.
-    , mroOutPrism :: Prism' B.ByteString b
     }
 
 
@@ -241,8 +240,6 @@ mapperWith p f = mapper $ f =$= C.mapMaybe conv
     where
       conv x = _2 (firstOf (re p)) x
 
-
-truncEnd n = B.reverse . B.take n . B.reverse
 
 
 -- | Construct a mapper program using a given low-level conduit.
@@ -274,23 +271,23 @@ mapper f = do
       nl = fromByteString "\n"
       every = 1
 
-      inLog i = liftIO $ hsEmitCounter "Map input chunks" every
-      outLog i = do
+      inLog _ = liftIO $ hsEmitCounter "Map input chunks" every
+      outLog _ = do
         liftIO $ hsEmitCounter "Map emitted rows" every
         -- liftIO $ hsEmitCounter (B.concat ["Map emitted: ", fn]) every
 
 
 
 -------------------------------------------------------------------------------
--- | Build a main function entry point for a reducer.
+-- | Build a main function entry point for a reducer. The buck stops
+-- here and we tag each bytestring line with a newline.
 reducerMain
     :: (MonadIO m, MonadThrow m, MonadUnsafeIO m)
-    => MROptions a r
-    -> Reducer a m r
+    => MROptions a
+    -> Reducer a m B.ByteString
     -> m ()
 reducerMain mro@MROptions{..} g =
     reducer mro g $=
-    C.mapMaybe (firstOf (re mroOutPrism)) $=
     C.map write $=
     builderToByteString $=
     C.mapM_ emitOutput $$
@@ -305,10 +302,10 @@ reducerMain mro@MROptions{..} g =
 -- arguments and you're done.
 reducer
     :: (MonadIO m, MonadThrow m)
-    => MROptions a r
-    -> Reducer a m r
+    => MROptions a
+    -> Reducer a m B.ByteString
     -- ^ A step function for the given key.
-    -> Source m r
+    -> Source m B.ByteString
 reducer MROptions{..} f = do
     liftIO $ hSetBuffering stderr LineBuffering
     liftIO $ hSetBuffering stdout LineBuffering
@@ -330,7 +327,7 @@ reducer MROptions{..} f = do
           next <- await
           case next of
             Nothing -> return ()
-            Just x@(k,v) ->
+            Just x@(k,_) ->
               case cur of
                 Just curKey -> do
                   case mroEq curKey k of
@@ -341,9 +338,9 @@ reducer MROptions{..} f = do
                   sameKey (Just k)
 
 
-      logIn i = liftIO $ hsEmitCounter "Reducer processed rows" every
-      logConv i = liftIO $ hsEmitCounter "Reducer deserialized objects" every
-      logOut i = liftIO $ hsEmitCounter "Reducer emitted rows" every
+      logIn _ = liftIO $ hsEmitCounter "Reducer processed rows" every
+      logConv _ = liftIO $ hsEmitCounter "Reducer deserialized objects" every
+      logOut _ = liftIO $ hsEmitCounter "Reducer emitted rows" every
 
       every = 1
 
@@ -472,9 +469,9 @@ pShow = prism
 -------------------------------------------------------------------------------
 mapReduce
     :: (MonadIO m, MonadThrow m, MonadUnsafeIO m)
-    => MROptions a r
+    => MROptions a
     -> Mapper B.ByteString m a
-    -> Reducer a m r
+    -> Reducer a m B.ByteString
     -> (m (), m ())
 mapReduce mro f g = (mp, rd)
     where
@@ -489,9 +486,9 @@ mapReduce mro f g = (mp, rd)
 -- This is the recommended approach to designing a map-reduce program.
 mapReduceMain
     :: (MonadIO m, MonadThrow m, MonadUnsafeIO m)
-    => MROptions a r
+    => MROptions a
     -> Mapper B.ByteString m a
-    -> Reducer a m r
+    -> Reducer a m B.ByteString
     -- ^ Reducer for a stream of values belonging to the same key.
     -> m ()
 mapReduceMain mro f g = liftIO (execParser opts) >>= run
