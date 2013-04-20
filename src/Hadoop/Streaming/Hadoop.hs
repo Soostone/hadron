@@ -28,6 +28,7 @@ module Hadoop.Streaming.Hadoop
 
     , Codec
     , gzipCodec
+    , snappyCodec
 
     -- * Hadoop Command Line Wrappers
     , launchMapReduce

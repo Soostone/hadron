@@ -34,16 +34,31 @@ module Hadoop.Streaming.Controller
     -- * Command Line Entry Point
       hadoopMain
     , HadoopSettings (..)
-    , MRSettings (..)
-    , RerunStrategy (..)
     , clouderaDemo
     , amazonEMR
+
+    -- * Base Settings for MapReduce Jobs
+    , MRSettings
+    , mrsPart
+    , mrsNumMap
+    , mrsNumReduce
+    , mrsCompress
+    , mrsCodec
+    , gzipCodec
+    , snappyCodec
+
+    , RerunStrategy (..)
 
     -- * Logging Related
     , logTo
 
     -- * Hadoop Program Construction
     , Controller
+
+    , connect
+    , connect'
+    , io
+
     , MapReduce (..)
     , Tap (..)
     , Tap'
@@ -51,15 +66,8 @@ module Hadoop.Streaming.Controller
 
     -- * Joining Multiple Datasets
     , joinStep
-    , DataDefs
-    , DataSet
     , JoinType (..)
     , JoinKey
-
-    -- * Control flow operations
-    , connect
-    , connect'
-    , io
 
     ) where
 
@@ -82,6 +90,7 @@ import           Data.RNG
 import           Data.Serialize
 import qualified Data.Text                 as T
 import           System.Environment
+import           System.IO
 -------------------------------------------------------------------------------
 import           Hadoop.Streaming
 import           Hadoop.Streaming.Hadoop
@@ -92,7 +101,8 @@ import           Hadoop.Streaming.Logger
 
 
 -------------------------------------------------------------------------------
--- | A packaged MapReduce step
+-- | A packaged MapReduce step. Make one of these for each distinct
+-- map-reduce step in your overall 'Controller' flow.
 data MapReduce a m b = forall v. MapReduce {
       mrOptions :: MROptions v
     , mrMapper  :: Mapper a m v
@@ -104,19 +114,24 @@ data MapReduce a m b = forall v. MapReduce {
 type Location = String
 
 
--- | Tap is a data source definition that *knows* how to serve records
--- of tupe 'a'.
+-- | Tap is a data source/sink definition that *knows* how to serve
+-- records of type 'a'.
 --
--- It comes with knowledge on how to serialize ByteString
--- to that type and can be used both as a sink (to save data form MR
--- output) or source (to feed MR programs).
+-- It comes with knowledge on how to decode ByteString to target type
+-- and can be used both as a sink (to save data form MR output) or
+-- source (to feed MR programs).
+--
+-- Usually, you just define the various data sources and destinations
+-- your MapReduce program is going to need:
+--
+-- > customers = 'tap' "s3n://my-bucket/customers" (csvProtocol def)
 data Tap m a = Tap
     { location :: Location
     , proto    :: Protocol' m a
     }
 
 
--- | If two loacitons are the same, we consider two Taps equal.
+-- | If two 'location's are the same, we consider two Taps equal.
 instance Eq (Tap m a) where
     a == b = location a == location b
 
@@ -162,7 +177,7 @@ newtype Controller a = Controller { unController :: Program ConI a }
 
 -------------------------------------------------------------------------------
 -- | Connect a MapReduce program to a set of inputs, returning the
--- output tap that was implicity generated.
+-- output tap that was implicity generated (on hdfs) in the process.
 connect' :: Serialize b => MapReduce a IO b -> [Tap IO a] -> Controller (Tap IO b)
 connect' mr inp = do
     out <- makeTap
@@ -171,8 +186,8 @@ connect' mr inp = do
 
 
 -------------------------------------------------------------------------------
--- | Connect a typed MapReduce application you will supply with a list
--- of sources and a destination.
+-- | Connect a typed MapReduce program you supply with a list of
+-- sources and a destination.
 connect :: MapReduce a IO b -> [Tap IO a] -> Tap IO b -> Controller ()
 connect mr inp outp = Controller $ singleton $ Connect mr inp outp
 
@@ -185,6 +200,10 @@ makeTap = Controller $ singleton MakeTap
 -- | LIft IO into 'Controller'. Note that this is a NOOP for when the
 -- Mappers/Reducers are running; it only executes in the main
 -- controller application during job-flow orchestration.
+--
+-- If you try to construct a 'MapReduce' step that depends on the
+-- result of an 'io' call, you'll get a runtime error when running
+-- your job.
 io :: IO a -> Controller a
 io f = Controller $ singleton $ ConIO f
 
@@ -271,8 +290,13 @@ instance Default RerunStrategy where
 -------------------------------------------------------------------------------
 -- | The main entry point. Use this function to produce a command line
 -- program that encapsulates everything.
+--
+-- When run without arguments, the program will orchestrate the entire
+-- MapReduce job flow. The same program also doubles as the actual
+-- mapper/reducer executable when called with right arguments, though
+-- you don't have to worry about that.
 hadoopMain
-    :: forall m a. (MonadThrow m, MonadIO m, MonadLogger m)
+    :: forall m a. (MonadThrow m, MonadIO m)
     => Controller a
     -> HadoopSettings
     -- ^ Base hadoop configuration
@@ -280,7 +304,7 @@ hadoopMain
     -- ^ Base 'MRSettings' - jobs will build on this.
     -> RerunStrategy
     -> m ()
-hadoopMain c@(Controller p) hs mrs rr = do
+hadoopMain c@(Controller p) hs mrs rr = logTo stdout $ do
     args <- liftIO getArgs
     case args of
       [] -> do
@@ -296,7 +320,7 @@ hadoopMain c@(Controller p) hs mrs rr = do
                      , (Reduce, "reduce_" ++ mrKey) ]
 
 
-      go :: String -> ConI b -> StateT ContState m b
+      go :: String -> ConI b -> StateT ContState (LoggingT m) b
 
       go _ (ConIO _) = return $ error "You tried to use the result of an IO action during Map-Reduce operation. That's illegal."
 
