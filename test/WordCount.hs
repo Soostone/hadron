@@ -15,21 +15,16 @@ import           Hadoop.Streaming
 -------------------------------------------------------------------------------
 
 main :: IO ()
-main = mapReduceMain mro mapper' reducer'
-
-
-mro = MROptions (==) def pSerialize pShow
-
+main = mapReduceMain defMRO mapper' reducer'
 
 mapper' = linesConduit =$= C.concatMap f
     where
       f ln = map (\w -> ([w], 1)) $ B.words ln
 
-
-reducer' :: Monad m => Reducer Int m (Row B.ByteString)
+reducer' :: Monad m => Reducer Int m B.ByteString
 reducer' = do
   (w, cnt) <- C.fold (\ (_, cnt) ([k], x) -> (k, cnt + x)) ("", 0)
-  yield $ [w, B.pack . show $ cnt]
+  yield $ B.concat [rowToStr def [w, B.pack . show $ cnt], "\n"]
 
 
 

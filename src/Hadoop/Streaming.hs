@@ -41,10 +41,11 @@ module Hadoop.Streaming
     , getFileName
 
      -- * MapReduce Construction
-    , MROptions (..)
-    , PartitionStrategy (..)
     , mapReduceMain
     , mapReduce
+    , MROptions (..)
+    , defMRO
+    , PartitionStrategy (..)
 
     -- * Low-level Utilities
     , mapper
@@ -94,6 +95,7 @@ import           Data.Conduit.Blaze
 import qualified Data.Conduit.List                as C
 import           Data.Conduit.Utils
 import           Data.CSV.Conduit
+import           Data.Default
 import           Data.List
 import           Data.Monoid
 import qualified Data.Serialize                   as Ser
@@ -231,6 +233,13 @@ data MROptions a = MROptions {
     -- steps.
     }
 
+
+-------------------------------------------------------------------------------
+-- | A default 'MROptions' safe to use for most jobs. Uses 'Eq' for
+-- equivalence, doesn't partition keys and uses a safe Base64 encoded
+-- serialization in between map-reduce steps.
+defMRO :: Ser.Serialize a => MROptions a
+defMRO = MROptions (==) def pSerialize
 
 
 -- | Construct a mapper program using given serialization Prism.
