@@ -52,7 +52,7 @@ module Hadoop.Streaming
     , reducer
     , reducerMain
 
-    -- * Serialization Helpers
+    -- * Serialization Strategies
     , Protocol (..)
     , Protocol'
     , prismToProtocol
@@ -188,7 +188,9 @@ emitOutput :: MonadIO m => B.ByteString -> m ()
 emitOutput bs = liftIO $ B.hPutStr stdout bs
 
 
--- | Get the current filename from Hadoop ENV.
+-- | Get the current filename from Hadoop ENV. Useful when writing
+-- 'Mapper's and you would like to know what file you're currently
+-- dealing with.
 getFileName :: MonadIO m => m String
 getFileName = liftIO $ getEnv "map_input_file"
 
@@ -216,7 +218,8 @@ type Reducer a m r  = Conduit (CompositeKey, a) m r
 
 
 -------------------------------------------------------------------------------
--- | Options for an MR job with internal value a and final output b.
+-- | Options for an MR job with value a emitted by 'Mapper' and
+-- reduced by 'Reducer'.
 data MROptions a = MROptions {
       mroEq      :: ([Key] -> [Key] -> Bool)
     -- ^ An equivalence test for incoming keys. True means given two
@@ -359,6 +362,7 @@ reducer MROptions{..} f = do
                               -------------------
 
 
+-- | Like 'Protocol' but fixes the source format as 'ByteString'.
 type Protocol' m a = Protocol m B.ByteString a
 
 
@@ -448,7 +452,21 @@ deserialize :: Ser.Serialize c => B.ByteString -> Either String c
 deserialize = Ser.decode <=< Base64.decode
 
 
--- | Serialize with the 'Serialize' instance
+-- | Serialize with the 'Serialize' instance.
+--
+-- Any 'Prism' can be used as follows:
+--
+-- >>> import Control.Lens
+--
+-- To decode ByteString into target object:
+--
+-- >>> firstOf myPrism byteStr
+-- Just a
+--
+-- To encode an object into ByteString:
+--
+-- >>> firstOf (re myPrism) myObject
+-- Just byteStr
 pSerialize :: Ser.Serialize a => Prism' B.ByteString a
 pSerialize = prism serialize (\x -> either (const $ Left x) Right $ deserialize x)
 
@@ -483,7 +501,11 @@ mapReduce mro f g = (mp, rd)
 -- | A default main that will respond to 'map' and 'reduce' commands
 -- to run the right phase appropriately.
 --
--- This is the recommended approach to designing a map-reduce program.
+-- This is the recommended 'main' entry point to a map-reduce program.
+-- The resulting program will respond as:
+--
+-- > ./myProgram map
+-- > ./myProgram reduce
 mapReduceMain
     :: (MonadIO m, MonadThrow m, MonadUnsafeIO m)
     => MROptions a

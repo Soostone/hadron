@@ -79,12 +79,14 @@ instance Default HadoopSettings where
 
 data PartitionStrategy
     = NoPartition
+    -- ^ Expect a single key segment emitted from the 'Mapper'.
     | Partition {
         keySegs  :: Int
       -- ^ Total segments comprising a key
       , partSegs :: Int
-      -- ^ First N key segments used for partitioning
+      -- ^ First N key segments used for partitioning.
       }
+    -- ^ Expect a composite key emitted form the 'Mapper'.
 
 instance Default PartitionStrategy where
     def = NoPartition
