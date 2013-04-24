@@ -14,6 +14,7 @@ import           Data.Default
 import           Hadoop.Streaming
 -------------------------------------------------------------------------------
 
+
 main :: IO ()
 main = mapReduceMain defMRO mapper' reducer'
 
