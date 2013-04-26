@@ -53,7 +53,7 @@ module Hadoop.Streaming
     , reducer
     , reducerMain
 
-    -- * Serialization Strategies
+    -- * Serialization Protocols
     , Protocol (..)
     , Protocol'
     , prismToProtocol
@@ -64,8 +64,11 @@ module Hadoop.Streaming
     , showProtocol
     , csvProtocol
 
+    -- * Serialization Prisms
     , pSerialize
     , pShow
+
+    -- * Serialization Utils
 
     , serialize
     , deserialize
