@@ -147,6 +147,8 @@ type Key = B.ByteString
 
 type Value = B.ByteString
 
+type CompositeKey = [Key]
+
 
 -- | Parse a line of input and eat a tab character that may be at the
 -- very end of the line. This tab is put by hadoop if this file is the
@@ -169,7 +171,7 @@ linesConduit = conduitParser parseLine =$= C.map snd
 
 
 -- | Parse lines of (key,value) for hadoop reduce stage
-lineC :: MonadThrow m => Int -> Conduit B.ByteString m ([Key], B.ByteString)
+lineC :: MonadThrow m => Int -> Conduit B.ByteString m (CompositeKey, B.ByteString)
 lineC n = linesConduit =$= C.map ppair
     where
       ppair line = (k, v)
@@ -197,13 +199,10 @@ getFileName :: MonadIO m => m String
 getFileName = liftIO $ getEnv "map_input_file"
 
 
-type CompositeKey   = [B.ByteString]
-
-
 -------------------------------------------------------------------------------
 -- | A 'Mapper' parses and converts the unbounded incoming stream of
 -- input into a stream of (key, value) pairs.
-type Mapper a m b     = Conduit a m ([Key], b)
+type Mapper a m b     = Conduit a m (CompositeKey, b)
 
 
 -------------------------------------------------------------------------------
@@ -223,7 +222,7 @@ type Reducer a m r  = Conduit (CompositeKey, a) m r
 -- | Options for an MR job with value a emitted by 'Mapper' and
 -- reduced by 'Reducer'.
 data MROptions a = MROptions {
-      mroEq      :: ([Key] -> [Key] -> Bool)
+      mroEq      :: (CompositeKey -> CompositeKey -> Bool)
     -- ^ An equivalence test for incoming keys. True means given two
     -- keys are part of the same reduce series.
     , mroPart    :: PartitionStrategy
@@ -246,7 +245,7 @@ defMRO = MROptions (==) def pSerialize
 mapperWith
     :: (MonadIO m, MonadUnsafeIO m)
     => Prism' B.ByteString t
-    -> Conduit B.ByteString m ([Key], t)
+    -> Conduit B.ByteString m (CompositeKey, t)
     -> m ()
 mapperWith p f = mapper $ f =$= C.mapMaybe conv
     where
@@ -257,7 +256,7 @@ mapperWith p f = mapper $ f =$= C.mapMaybe conv
 -- | Construct a mapper program using a given low-level conduit.
 mapper
     :: (MonadIO m, MonadUnsafeIO m)
-    => Conduit B.ByteString m ([Key], B.ByteString)
+    => Conduit B.ByteString m (CompositeKey, B.ByteString)
     -- ^ A key/value producer - don't worry about putting any newline
     -- endings yourself, we do that for you.
     -> m ()
