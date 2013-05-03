@@ -346,7 +346,7 @@ hadoopMain c@(Controller p) hs mrs rr = logTo stdout $ do
 
 
 -- | TODO: See if this works. Objective is to increase type safety of
--- join inputs.
+-- join inputs. Notice how we have an existential on a.
 --
 -- A join definition that ultimately produces objects of type b.
 data JoinDef m b = forall a. JoinDef {
@@ -358,7 +358,8 @@ data JoinDef m b = forall a. JoinDef {
 
 -------------------------------------------------------------------------------
 -- | A convenient way to express multi-way join operations into a
--- single data type.
+-- single data type. All you need to supply is the map operation for
+-- each tap, the reduce step is assumed to be the Monoidal 'mconcat'.
 joinStep
     :: forall m b a. (MonadIO m, MonadThrow m,
                       Show b, Monoid b, Serialize b)
