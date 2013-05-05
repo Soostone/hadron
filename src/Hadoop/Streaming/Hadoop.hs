@@ -125,12 +125,11 @@ type Codec = String
 gzipCodec :: Codec
 gzipCodec = "org.apache.hadoop.io.compress.GzipCodec"
 
-snappyCodec :: String
+snappyCodec :: Codec
 snappyCodec = "org.apache.hadoop.io.compress.SnappyCodec"
 
 
 type MapReduceKey = String
-
 
 
 -------------------------------------------------------------------------------
@@ -193,7 +192,7 @@ launchMapReduce HadoopSettings{..} mrKey MRSettings{..} = do
 
 -------------------------------------------------------------------------------
 -- | Check if the target file is present.
-hdfsFileExists :: HadoopSettings -> String -> IO Bool
+hdfsFileExists :: HadoopSettings -> FilePath -> IO Bool
 hdfsFileExists HadoopSettings{..} p = do
     res <- rawSystem hsBin ["fs", "-stat", p]
     return $ case res of
@@ -204,7 +203,7 @@ hdfsFileExists HadoopSettings{..} p = do
 
 -------------------------------------------------------------------------------
 -- | Check if the target file is present.
-hdfsDeletePath :: HadoopSettings -> String -> IO ExitCode
+hdfsDeletePath :: HadoopSettings -> FilePath -> IO ExitCode
 hdfsDeletePath HadoopSettings{..} p =
     rawSystem hsBin ["fs", "-rmr", "-skipTrash", p]
 

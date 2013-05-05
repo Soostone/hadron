@@ -198,7 +198,7 @@ emitOutput bs = liftIO $ B.hPutStr stdout bs
 -- | Get the current filename from Hadoop ENV. Useful when writing
 -- 'Mapper's and you would like to know what file you're currently
 -- dealing with.
-getFileName :: MonadIO m => m String
+getFileName :: MonadIO m => m FilePath
 getFileName = liftIO $ getEnv "map_input_file"
 
 
@@ -538,7 +538,7 @@ mapReduceMain mro f g = liftIO (execParser opts) >>= run
     opts = info (helper <*> commandParse)
       ( fullDesc
       <> progDesc "This is a Hadoop Streaming Map/Reduce binary. "
-      <> header "hadoop-streaming - use Haskell as your streaming Hadoop program."
+      <> header "hadron - use Haskell for Hadoop Streaming."
       )
 
 
