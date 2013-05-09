@@ -91,6 +91,7 @@ import           Control.Monad.Trans
 import           Data.Attoparsec.ByteString.Char8 (Parser, endOfLine, takeTill)
 import qualified Data.ByteString.Base64           as Base64
 import qualified Data.ByteString.Char8            as B
+import qualified Data.ByteString.Lazy.Char8       as LB
 import           Data.Conduit
 import           Data.Conduit.Attoparsec
 import           Data.Conduit.Binary              (sinkHandle, sourceHandle)
@@ -121,29 +122,32 @@ showBS :: Show a => a -> B.ByteString
 showBS = B.pack . show
 
 
+-- | Emit a counter to be captured, added up and reported by Hadoop.
 emitCounter
     :: B.ByteString
-    -- ^ Group
+    -- ^ Group name
     -> B.ByteString
     -- ^ Counter name
     -> Integer
     -- ^ Increment
     -> IO ()
-emitCounter grp counter inc = B.hPutStrLn stderr txt
+emitCounter grp counter inc = LB.hPutStrLn stderr $ toLazyByteString txt
     where
-      txt = B.concat ["reporter:counter:", grp, ",", counter, ",", showBS inc]
+      txt = mconcat $ map fromByteString
+            ["reporter:counter:", grp, ",", counter, ",", showBS inc]
 
 
 -- | Emit counter from this library's group
 hsEmitCounter :: B.ByteString -> Integer -> IO ()
-hsEmitCounter = emitCounter "hadoop-streaming"
+hsEmitCounter = emitCounter "hadron"
 
 
 -- | Emit a status line
 emitStatus :: B.ByteString -> IO ()
-emitStatus msg = B.hPutStrLn stderr txt
+emitStatus msg = LB.hPutStrLn stderr $ toLazyByteString txt
     where
-      txt = B.concat ["reporter:status:", msg]
+      txt = fromByteString "reporter:status:" <>
+            fromByteString msg
 
 
 type Key = B.ByteString
@@ -174,7 +178,11 @@ linesConduit = conduitParser parseLine =$= C.map snd
 
 
 -- | Parse lines of (key,value) for hadoop reduce stage
-lineC :: MonadThrow m => Int -> Conduit B.ByteString m (CompositeKey, B.ByteString)
+lineC :: MonadThrow m
+      => Int
+      -- ^ Number of key segments (usually just 1), but may be higher
+      -- if you're using multiple parts in your key.
+      -> Conduit B.ByteString m (CompositeKey, B.ByteString)
 lineC n = linesConduit =$= C.map ppair
     where
       ppair line = (k, v)
