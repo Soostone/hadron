@@ -40,8 +40,15 @@ jobs.
 
 ## TODO
 
+  - Escape newlines instead of all-out Base64 encoding in internal
+    binary protocol (i.e. emit 0xff 0x0a for newline, and 0xff 0xff
+    for 0xff). (gregorycollins)
+    
+  - Hand-roll a parseLine function break on newlines and tab
+    characters using elemIndex. (gregorycollins)
+
   - Add a `loadTap` function to support loading small files directly
-    into memory, as opposed to a full-blown join.
+    into memory, as opposed to a full-blown join. bytestring-mmap?
 
   - Make launchHadoop logging real-time
 
