@@ -71,13 +71,6 @@ amazonEMR = HadoopSettings {
             }
 
 
-instance Default HadoopSettings where
-    def = HadoopSettings {
-            hsBin = "hadoop"
-          , hsJar = "/usr/lib/hadoop-0.20-mapreduce/contrib/streaming/hadoop-streaming-2.0.0-mr1-cdh4.2.0.jar"
-          }
-
-
 data PartitionStrategy
     = NoPartition
     -- ^ Expect a single key segment emitted from the 'Mapper'.
