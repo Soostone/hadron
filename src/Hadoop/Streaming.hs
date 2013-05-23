@@ -194,7 +194,6 @@ lineC n = linesConduit =$= C.map ppair
             spl = B.split '\t' line
 
 
-
 -- | Use this whenever you want to emit a line to the output as part
 -- of the current stage, whether your mapping or reducing.
 --
