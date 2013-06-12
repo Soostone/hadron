@@ -3,7 +3,7 @@ version:             0.1.0.0
 description:         Use Haskell programs for data processing with Hadoop
 license:             BSD3
 license-file:        LICENSE
-author:              Ozgun Ataman
+author:              Ozgun Ataman, Doug Beardsley
 maintainer:          ozgun.ataman@soostone.com
 category:            Data
 build-type:          Simple
