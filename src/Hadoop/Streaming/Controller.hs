@@ -64,6 +64,7 @@ module Hadoop.Streaming.Controller
     , Tap'
     , tap
     , fileListTap
+    , binaryDirectoryTap
     , readHdfsFile
 
     -- * Joining Multiple Datasets
@@ -164,10 +165,25 @@ readHdfsFile settings = awaitForever $ \s3Uri -> do
 -- limitation by instead making your input a list of file paths that contain
 -- binary data.  Then the file names get split by hadoop and each map job
 -- reads from those files as its first step.
+fileListTap :: HadoopSettings
+            -> Location
+            -- ^ A file containing a list of files to be used as input
+            -> Tap IO B.ByteString
 fileListTap settings loc = tap loc (Protocol enc dec)
   where
     enc = error "You should never use a fileListTap as output!"
     dec = linesConduit =$= readHdfsFile settings
+
+
+------------------------------------------------------------------------------
+-- | Wrapper around 'fileListTap' that takes an HDFS directory instead of a
+-- file containing a list of files.  This function 
+binaryDirectoryTap :: HadoopSettings -> FilePath -> IO (Tap IO B.ByteString)
+binaryDirectoryTap settings loc = do
+    files <- hdfsLs settings loc
+    listFile <- randomFilename
+    writeFile listFile $ unlines files
+    return $ fileListTap settings listFile
 
 
 data ContState = ContState {
@@ -241,7 +257,6 @@ newMRKey = do
     return $! show i
 
 
-
 -------------------------------------------------------------------------------
 -- | Interpreter for the central job control process
 orchestrate
@@ -252,7 +267,7 @@ orchestrate
     -> RerunStrategy
     -> ContState
     -> m (Either String a)
-orchestrate (Controller p) set mrs rr s = evalStateT (runEitherT (go p)) s
+orchestrate (Controller p) settings mrs rr s = evalStateT (runEitherT (go p)) s
     where
       go = eval . O.view
 
@@ -270,7 +285,7 @@ orchestrate (Controller p) set mrs rr s = evalStateT (runEitherT (go p)) s
       eval' (Connect mr@(MapReduce mro _ _) inp outp) = go'
           where
             go' = do
-                chk <- liftIO $ hdfsFileExists set (location outp)
+                chk <- liftIO $ hdfsFileExists settings (location outp)
                 case chk of
                   False -> go''
                   True ->
@@ -282,11 +297,11 @@ orchestrate (Controller p) set mrs rr s = evalStateT (runEitherT (go p)) s
                         lift $ $(logInfo) $ T.pack $
                           "Destination file exists, will delete and rerun: " ++
                           location outp
-                        liftIO $ hdfsDeletePath set (location outp)
+                        _ <- liftIO $ hdfsDeletePath settings (location outp)
                         go''
             go'' = do
               mrKey <- newMRKey
-              launchMapReduce set mrKey
+              launchMapReduce settings mrKey
                 mrs { mrsInput = map location inp
                     , mrsOutput = location outp
                     , mrsPart = mroPart mro }
@@ -335,7 +350,7 @@ hadoopMain c@(Controller p) hs mrs rr = logTo stdout $ do
         res <- orchestrate c hs mrs rr def
         liftIO $ either print (const $ putStrLn "Success.") res
       [arg] -> do
-        evalStateT (interpretWithMonad (go arg) p) def
+        _ <- evalStateT (interpretWithMonad (go arg) p) def
         return ()
       _ -> error "Usage: No arguments for job control or a phase name."
     where
@@ -395,7 +410,7 @@ joinStep fs = MapReduce joinOpts mp rd
 
       names :: [(Location, DataSet)]
       names = map (\ (i, loc) -> (loc, DataSet $ B.concat [showBS i, ":",  showBS $ hashWithSalt salt loc])) $
-              zip [0..] locations
+              zip [(0::Integer)..] locations
 
       nameIx :: M.Map Location DataSet
       nameIx = M.fromList names
@@ -427,8 +442,8 @@ joinStep fs = MapReduce joinOpts mp rd
 
       -- | get the conduit for given dataset name
       mkMap' ds = fromMaybe (error "Can't identify current tap in IX.") $ do
-                      tap <- M.lookup ds tapIx
-                      cond <- find ((== tap) . view _1) fs
+                      t <- M.lookup ds tapIx
+                      cond <- find ((== t) . view _1) fs
                       return $ view _3 cond
 
       mp = joinMapper getDS mkMap'
