@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RankNTypes        #-}
 {-# LANGUAGE RecordWildCards   #-}
 {-# LANGUAGE TemplateHaskell   #-}
 
@@ -29,22 +30,32 @@ module Hadoop.Streaming.Hadoop
     , Codec
     , gzipCodec
     , snappyCodec
+    , randomFilename
 
     -- * Hadoop Command Line Wrappers
     , launchMapReduce
     , hdfsFileExists
     , hdfsDeletePath
+    , hdfsLs
+    , hdfsCat
+    , hdfsGet
     ) where
 
 -------------------------------------------------------------------------------
 import           Control.Error
 import           Control.Monad.Logger
 import           Control.Monad.Trans
+import           Data.ByteString.Char8 (ByteString)
+import qualified Data.ByteString.Char8 as B
+import           Data.Conduit
+import           Data.Conduit.Binary              (sourceHandle)
 import           Data.Default
 import           Data.List
+import           Data.RNG
 import qualified Data.Text            as T
 import           System.Environment
 import           System.Exit
+import           System.IO
 import           System.Process
 -------------------------------------------------------------------------------
 
@@ -201,5 +212,45 @@ hdfsDeletePath HadoopSettings{..} p =
     rawSystem hsBin ["fs", "-rmr", "-skipTrash", p]
 
 
+
+-------------------------------------------------------------------------------
+-- | Check if the target file is present.
+hdfsLs :: HadoopSettings -> FilePath -> IO [FilePath]
+hdfsLs HadoopSettings{..} p = do
+    (res,out,_) <- readProcessWithExitCode hsBin ["fs", "-ls", p] ""
+    return $ case res of
+      ExitSuccess -> filter (not . null) $ map (drop 43) $ lines out
+      ExitFailure{} -> []
+
+
+-------------------------------------------------------------------------------
+-- | Check if the target file is present.
+hdfsCat :: MonadIO m => HadoopSettings -> FilePath -> Producer m ByteString
+hdfsCat HadoopSettings{..} p = do
+    (inH, outH, errH, ph) <- liftIO $
+      createProcess (proc hsBin ["fs", "-cat", p])
+    maybe err sourceHandle outH
+  where
+    err = liftIO $
+      hPutStrLn stderr $ unwords ["Could not open file", p, "!  Skipping...."]
+
+
+------------------------------------------------------------------------------
+-- | Generates a random filename in the /tmp/hadoop-streaming directory.
+randomFilename :: IO FilePath
+randomFilename = do
+    tk <- mkRNG >>= randomToken 64
+    return $ B.unpack $ B.concat ["/tmp/hadoop-streaming/", tk]
+
+
+-------------------------------------------------------------------------------
+-- | Check if the target file is present.
+hdfsGet :: MonadIO m => HadoopSettings -> FilePath -> Source m ByteString
+hdfsGet HadoopSettings{..} p = do
+    h <- liftIO $ do
+        tmpFile <- randomFilename
+        rawSystem hsBin ["fs", "-get", p, tmpFile]
+        openFile tmpFile ReadMode
+    sourceHandle h
 
 

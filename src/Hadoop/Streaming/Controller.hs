@@ -63,6 +63,8 @@ module Hadoop.Streaming.Controller
     , Tap (..)
     , Tap'
     , tap
+    , fileListTap
+    , readHdfsFile
 
     -- * Joining Multiple Datasets
     , joinStep
@@ -81,12 +83,12 @@ import           Control.Monad.State
 import qualified Data.ByteString.Char8     as B
 import           Data.Conduit
 import           Data.Conduit.Utils
+import           Data.Conduit.Zlib
 import           Data.Default
 import           Data.Hashable
 import           Data.List
 import qualified Data.Map                  as M
 import           Data.Monoid
-import           Data.RNG
 import           Data.Serialize
 import qualified Data.Text                 as T
 import           System.Environment
@@ -143,6 +145,29 @@ type Tap' a = Tap IO a
 -- | Construct a 'DataDef'
 tap :: Location -> Protocol' m a -> Tap m a
 tap = Tap
+
+
+------------------------------------------------------------------------------
+-- | Conduit that takes in hdfs filenames and outputs the file contents.
+readHdfsFile :: HadoopSettings -> Conduit B.ByteString IO B.ByteString
+readHdfsFile settings = awaitForever $ \s3Uri -> do
+    let uriStr = B.unpack s3Uri
+    let getFile = hdfsCat settings uriStr
+    if isSuffixOf "gz" uriStr
+      then getFile =$= ungzip
+      else getFile
+
+
+------------------------------------------------------------------------------
+-- | Tap for handling file lists.  Hadoop can't process raw binary data
+-- because it splits on newlines.  This tap allows you to get around that
+-- limitation by instead making your input a list of file paths that contain
+-- binary data.  Then the file names get split by hadoop and each map job
+-- reads from those files as its first step.
+fileListTap settings loc = tap loc (Protocol enc dec)
+  where
+    enc = error "You should never use a fileListTap as output!"
+    dec = linesConduit =$= readHdfsFile settings
 
 
 data ContState = ContState {
@@ -239,8 +264,7 @@ orchestrate (Controller p) set mrs rr s = evalStateT (runEitherT (go p)) s
       eval' (ConIO f) = liftIO f
 
       eval' MakeTap = do
-          tk <- liftIO $ mkRNG >>= randomToken 64
-          let loc = B.unpack $ B.concat ["/tmp/hadoop-streaming/", tk]
+          loc <- liftIO randomFilename
           return $ Tap loc serProtocol
 
       eval' (Connect mr@(MapReduce mro _ _) inp outp) = go'
@@ -325,8 +349,7 @@ hadoopMain c@(Controller p) hs mrs rr = logTo stdout $ do
       go _ (ConIO _) = return $ error "You tried to use the result of an IO action during Map-Reduce operation. That's illegal."
 
       go _ MakeTap = do
-          tk <- liftIO $ mkRNG >>= randomToken 64
-          let loc = B.unpack $ B.concat ["/tmp/hadoop-streaming/", tk]
+          loc <- liftIO randomFilename
           return $ Tap loc serProtocol
 
       go arg (Connect (MapReduce mro mp rd) inp outp) = do
@@ -342,7 +365,6 @@ hadoopMain c@(Controller p) hs mrs rr = logTo stdout $ do
                   rd' = rd =$= protoEnc outSer
               liftIO $ (reducerMain mro rd')
             Nothing -> return ()
-
 
 
 -- | TODO: See if this works. Objective is to increase type safety of
