@@ -68,17 +68,4 @@ jobs.
   - (?) Add support for parsing file locations, other settings from
     a config file
     
-  - Add support for having mappers work with lists of files, instead
-    of relying to hadoop
-    - controller generates a list of files from a root loc and glob
-      pattern, puts it on a temp hdfs loc
-    - calls hadoop with list of files as input
-    - each mapper gets a sup-portion of the list
-    - mapper takes each file, copies it to local from hdfs, streams
-      over it and deletes it
-    - reducer is oblivious to all this, works as usual
-
-
-
-
 
