@@ -289,7 +289,7 @@ orchestrate (Controller p) settings mrs rr s = evalStateT (runEitherT (go p)) s
               paths = map (prefix++) files
           createDirectoryIfMissing True $ dropFileName localFile
           writeFile localFile $ unlines paths
-          code <- hdfsPut settings localFile localFile
+          _ <- hdfsPut settings localFile localFile
           return $ fileListTap settings localFile
 
       eval' (Connect mr@(MapReduce mro _ _) inp outp) = go'
@@ -373,13 +373,9 @@ hadoopMain c@(Controller p) hs mrs rr = logTo stdout $ do
 
       go _ (ConIO _) = return $ error "You tried to use the result of an IO action during Map-Reduce operation. That's illegal."
 
-      go _ MakeTap = do
-          loc <- liftIO randomFilename
-          return $ Tap loc serProtocol
+      go _ MakeTap = return $ error "MakeTap should not be used during Map-Reduce operation. That's illegal."
 
-      go _ (BinaryDirTap _) = liftIO $ do
-          listFile <- randomFilename
-          return $ fileListTap hs listFile
+      go _ (BinaryDirTap _) = return $ error "BinaryDirTap should not be used during Map-Reduce operation. That's illegal."
 
       go arg (Connect (MapReduce mro mp rd) inp outp) = do
           mrKey <- newMRKey
