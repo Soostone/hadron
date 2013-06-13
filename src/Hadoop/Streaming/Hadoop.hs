@@ -37,6 +37,7 @@ module Hadoop.Streaming.Hadoop
     , hdfsFileExists
     , hdfsDeletePath
     , hdfsLs
+    , hdfsPut
     , hdfsCat
     , hdfsGet
     ) where
@@ -225,14 +226,25 @@ hdfsLs HadoopSettings{..} p = do
 
 -------------------------------------------------------------------------------
 -- | Check if the target file is present.
+hdfsPut :: HadoopSettings -> FilePath -> FilePath -> IO ExitCode
+hdfsPut HadoopSettings{..} localPath hdfsPath =
+    rawSystem hsBin ["fs", "-put", localPath, hdfsPath]
+
+
+-------------------------------------------------------------------------------
+-- | Check if the target file is present.
 hdfsCat :: MonadIO m => HadoopSettings -> FilePath -> Producer m ByteString
 hdfsCat HadoopSettings{..} p = do
-    (inH, outH, errH, ph) <- liftIO $
-      createProcess (proc hsBin ["fs", "-cat", p])
+    (inH, outH, errH, ph) <- liftIO $ do
+      let cp = (proc hsBin ["fs", "-cat", p]) { std_in = CreatePipe
+                                              , std_out = CreatePipe
+                                              , std_err = Inherit }
+      createProcess cp
+    maybe (return ()) (liftIO . hClose) inH
     maybe err sourceHandle outH
   where
     err = liftIO $
-      hPutStrLn stderr $ unwords ["Could not open file", p, "!  Skipping...."]
+      hPutStrLn stderr $ concat ["Could not open file ", p, ".  Skipping...."]
 
 
 ------------------------------------------------------------------------------

@@ -63,8 +63,8 @@ module Hadoop.Streaming.Controller
     , Tap (..)
     , Tap'
     , tap
+    , binaryDirTap
     , fileListTap
-    , binaryDirectoryTap
     , readHdfsFile
 
     -- * Joining Multiple Datasets
@@ -88,11 +88,14 @@ import           Data.Conduit.Zlib
 import           Data.Default
 import           Data.Hashable
 import           Data.List
+import           Data.List.LCS.HuntSzymanski
 import qualified Data.Map                  as M
 import           Data.Monoid
 import           Data.Serialize
 import qualified Data.Text                 as T
+import           System.Directory
 import           System.Environment
+import           System.FilePath
 import           System.IO
 -------------------------------------------------------------------------------
 import           Hadoop.Streaming
@@ -175,17 +178,6 @@ fileListTap settings loc = tap loc (Protocol enc dec)
     dec = linesConduit =$= readHdfsFile settings
 
 
-------------------------------------------------------------------------------
--- | Wrapper around 'fileListTap' that takes an HDFS directory instead of a
--- file containing a list of files.  This function 
-binaryDirectoryTap :: HadoopSettings -> FilePath -> IO (Tap IO B.ByteString)
-binaryDirectoryTap settings loc = do
-    files <- hdfsLs settings loc
-    listFile <- randomFilename
-    writeFile listFile $ unlines files
-    return $ fileListTap settings listFile
-
-
 data ContState = ContState {
       _csMRCount :: Int
     }
@@ -205,6 +197,7 @@ data ConI a where
             -> ConI ()
 
     MakeTap :: Serialize a => ConI (Tap IO a)
+    BinaryDirTap :: Location -> ConI (Tap IO B.ByteString)
 
     ConIO :: IO a -> ConI a
 
@@ -236,6 +229,12 @@ connect mr inp outp = Controller $ singleton $ Connect mr inp outp
 -------------------------------------------------------------------------------
 makeTap :: Serialize a => Controller (Tap IO a)
 makeTap = Controller $ singleton MakeTap
+
+
+-------------------------------------------------------------------------------
+-- | Creates a tap for a directory of binary files.
+binaryDirTap :: Location -> Controller (Tap IO B.ByteString)
+binaryDirTap loc = Controller $ singleton $ BinaryDirTap loc
 
 
 -- | LIft IO into 'Controller'. Note that this is a NOOP for when the
@@ -281,6 +280,17 @@ orchestrate (Controller p) settings mrs rr s = evalStateT (runEitherT (go p)) s
       eval' MakeTap = do
           loc <- liftIO randomFilename
           return $ Tap loc serProtocol
+
+      eval' (BinaryDirTap loc) = liftIO $ do
+          localFile <- randomFilename
+          files <- hdfsLs settings loc
+          let suffix = lcs loc (head files)
+              prefix = take (length loc - length suffix) loc
+              paths = map (prefix++) files
+          createDirectoryIfMissing True $ dropFileName localFile
+          writeFile localFile $ unlines paths
+          code <- hdfsPut settings localFile localFile
+          return $ fileListTap settings localFile
 
       eval' (Connect mr@(MapReduce mro _ _) inp outp) = go'
           where
@@ -366,6 +376,10 @@ hadoopMain c@(Controller p) hs mrs rr = logTo stdout $ do
       go _ MakeTap = do
           loc <- liftIO randomFilename
           return $ Tap loc serProtocol
+
+      go _ (BinaryDirTap _) = liftIO $ do
+          listFile <- randomFilename
+          return $ fileListTap hs listFile
 
       go arg (Connect (MapReduce mro mp rd) inp outp) = do
           mrKey <- newMRKey
