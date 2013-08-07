@@ -61,6 +61,7 @@ module Hadoop.Streaming
     , idProtocol
     , linesProtocol
     , serProtocol
+    , gzipProtocol
     , showProtocol
     , csvProtocol
 
@@ -98,6 +99,7 @@ import           Data.Conduit.Binary              (sinkHandle, sourceHandle)
 import           Data.Conduit.Blaze
 import qualified Data.Conduit.List                as C
 import           Data.Conduit.Utils
+import           Data.Conduit.Zlib                (gzip, ungzip)
 import           Data.CSV.Conduit
 import           Data.Default
 import           Data.List
@@ -442,6 +444,13 @@ linesProtocol = Protocol { protoEnc = C.map (\x -> B.concat [x, "\n"])
 serProtocol :: (MonadUnsafeIO m, MonadThrow m, Ser.Serialize a)
             => Protocol' m a
 serProtocol = prismToProtocol pSerialize
+
+
+-------------------------------------------------------------------------------
+-- | Encode and decode a gzip stream
+gzipProtocol :: (MonadUnsafeIO m, MonadThrow m)
+             => Protocol m B.ByteString B.ByteString
+gzipProtocol = Protocol gzip ungzip
 
 
 -------------------------------------------------------------------------------
