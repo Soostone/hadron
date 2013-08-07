@@ -90,7 +90,8 @@ executable FixHadoopOutput
      hashable,
      rng-utils,
      blaze-builder-conduit,
-     blaze-builder
+     blaze-builder,
+     zlib-conduit
 
   hs-source-dirs:      src
   default-language:    Haskell2010
