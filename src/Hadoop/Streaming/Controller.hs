@@ -78,10 +78,10 @@ module Hadoop.Streaming.Controller
 import           Control.Applicative
 import           Control.Error
 import           Control.Lens
-import           Control.Monad.Operational hiding (view)
-import qualified Control.Monad.Operational as O
+import           Control.Monad.Operational   hiding (view)
+import qualified Control.Monad.Operational   as O
 import           Control.Monad.State
-import qualified Data.ByteString.Char8     as B
+import qualified Data.ByteString.Char8       as B
 import           Data.Conduit
 import           Data.Conduit.Utils
 import           Data.Conduit.Zlib
@@ -89,10 +89,10 @@ import           Data.Default
 import           Data.Hashable
 import           Data.List
 import           Data.List.LCS.HuntSzymanski
-import qualified Data.Map                  as M
+import qualified Data.Map                    as M
 import           Data.Monoid
 import           Data.Serialize
-import qualified Data.Text                 as T
+import qualified Data.Text                   as T
 import           System.Directory
 import           System.Environment
 import           System.FilePath
@@ -373,9 +373,11 @@ hadoopMain c@(Controller p) hs mrs rr = logTo stdout $ do
 
       go _ (ConIO _) = return $ error "You tried to use the result of an IO action during Map-Reduce operation. That's illegal."
 
-      go _ MakeTap = return $ error "MakeTap should not be used during Map-Reduce operation. That's illegal."
+      go _ MakeTap = return $ tap "" serProtocol
+      -- return $ error "MakeTap should not be used during Map-Reduce operation. That's illegal."
 
-      go _ (BinaryDirTap _) = return $ error "BinaryDirTap should not be used during Map-Reduce operation. That's illegal."
+      go _ (BinaryDirTap _) = return $ tap "" idProtocol
+      -- return $ error "BinaryDirTap should not be used during Map-Reduce operation. That's illegal."
 
       go arg (Connect (MapReduce mro mp rd) inp outp) = do
           mrKey <- newMRKey
