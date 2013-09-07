@@ -64,6 +64,7 @@ module Hadoop.Streaming.Controller
     , Tap'
     , tap
     , binaryDirTap
+    , setupBinaryDir
     , fileListTap
     , readHdfsFile
 
@@ -158,7 +159,7 @@ tap = Tap
 readHdfsFile :: HadoopSettings -> Conduit B.ByteString IO B.ByteString
 readHdfsFile settings = awaitForever $ \s3Uri -> do
     let uriStr = B.unpack s3Uri
-    let getFile = hdfsCat settings uriStr
+    let getFile = hdfsLocalStream settings uriStr
     if isSuffixOf "gz" uriStr
       then getFile =$= ungzip
       else getFile
@@ -264,6 +265,18 @@ newMRKey = do
     return $! show i
 
 
+setupBinaryDir settings loc = do
+    localFile <- randomFilename
+    files <- hdfsLs settings loc
+    let suffix = lcs loc (head files)
+        prefix = take (length loc - length suffix) loc
+        paths = map (prefix++) files
+    createDirectoryIfMissing True $ dropFileName localFile
+    writeFile localFile $ unlines paths
+    _ <- hdfsPut settings localFile localFile
+    return localFile
+
+
 -------------------------------------------------------------------------------
 -- | Interpreter for the central job control process
 orchestrate
@@ -290,14 +303,7 @@ orchestrate (Controller p) settings mrs rr s = evalStateT (runEitherT (go p)) s
           return $ Tap loc serProtocol
 
       eval' (BinaryDirTap loc) = liftIO $ do
-          localFile <- randomFilename
-          files <- hdfsLs settings loc
-          let suffix = lcs loc (head files)
-              prefix = take (length loc - length suffix) loc
-              paths = map (prefix++) files
-          createDirectoryIfMissing True $ dropFileName localFile
-          writeFile localFile $ unlines paths
-          _ <- hdfsPut settings localFile localFile
+          localFile <- setupBinaryDir settings loc
           return $ fileListTap settings localFile
 
       eval' (Connect mr@(MapReduce mro _ _) inp outp) = go'

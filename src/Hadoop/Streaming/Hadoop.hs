@@ -40,6 +40,7 @@ module Hadoop.Streaming.Hadoop
     , hdfsPut
     , hdfsCat
     , hdfsGet
+    , hdfsLocalStream 
     ) where
 
 -------------------------------------------------------------------------------
@@ -232,7 +233,10 @@ hdfsPut HadoopSettings{..} localPath hdfsPath =
 
 
 -------------------------------------------------------------------------------
--- | Stream data directly from HDFS using @hdfs cat@
+-- | Stream data directly from HDFS using @hdfs cat@.
+--
+-- NOTE: It appears that this function may output a header before the file
+-- contents.  Be careful!
 hdfsCat :: MonadIO m => HadoopSettings -> FilePath -> Producer m ByteString
 hdfsCat HadoopSettings{..} p = do
     (inH, outH, errH, ph) <- liftIO $ do
