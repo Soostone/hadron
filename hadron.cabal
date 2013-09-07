@@ -18,6 +18,8 @@ library
     Hadoop.Streaming.Hadoop
     Hadoop.Streaming.Controller
     Hadoop.Streaming.Logger
+    Hadoop.Streaming.Protocol
+    Hadoop.Streaming.Types
 
   build-depends:       
      attoparsec,

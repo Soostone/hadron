@@ -49,11 +49,11 @@ import           Control.Monad.Trans
 import           Data.ByteString.Char8 (ByteString)
 import qualified Data.ByteString.Char8 as B
 import           Data.Conduit
-import           Data.Conduit.Binary              (sourceHandle)
+import           Data.Conduit.Binary   (sourceHandle)
 import           Data.Default
 import           Data.List
 import           Data.RNG
-import qualified Data.Text            as T
+import qualified Data.Text             as T
 import           System.Environment
 import           System.Exit
 import           System.IO
@@ -232,7 +232,7 @@ hdfsPut HadoopSettings{..} localPath hdfsPath =
 
 
 -------------------------------------------------------------------------------
--- | Check if the target file is present.
+-- | Stream data directly from HDFS using @hdfs cat@
 hdfsCat :: MonadIO m => HadoopSettings -> FilePath -> Producer m ByteString
 hdfsCat HadoopSettings{..} p = do
     (inH, outH, errH, ph) <- liftIO $ do
@@ -256,13 +256,11 @@ randomFilename = do
 
 
 -------------------------------------------------------------------------------
--- | Check if the target file is present.
-hdfsGet :: MonadIO m => HadoopSettings -> FilePath -> Source m ByteString
+-- | Copy file from HDFS to a temporary local file whose name is returned.
+hdfsGet :: HadoopSettings -> FilePath -> IO FilePath
 hdfsGet HadoopSettings{..} p = do
-    h <- liftIO $ do
-        tmpFile <- randomFilename
-        rawSystem hsBin ["fs", "-get", p, tmpFile]
-        openFile tmpFile ReadMode
-    sourceHandle h
+    tmpFile <- randomFilename
+    rawSystem hsBin ["fs", "-get", p, tmpFile]
+    return tmpFile
 
 

@@ -102,6 +102,8 @@ import           Hadoop.Streaming
 import           Hadoop.Streaming.Hadoop
 import           Hadoop.Streaming.Join
 import           Hadoop.Streaming.Logger
+import           Hadoop.Streaming.Protocol
+import           Hadoop.Streaming.Types
 -------------------------------------------------------------------------------
 
 
@@ -204,6 +206,12 @@ data ConI a where
 
 
 -- | All MapReduce steps are integrated in the 'Controller' monad.
+--
+-- Warning: We do have an 'io' combinator as an escape valve for you
+-- to use. However, you need to be careful how you use the result of
+-- an IO computation. Remember that the same 'main' function will run
+-- on both the main orchestrator process and on each and every
+-- map/reduce node.
 newtype Controller a = Controller { unController :: Program ConI a }
     deriving (Functor, Applicative, Monad)
 
@@ -371,7 +379,7 @@ hadoopMain c@(Controller p) hs mrs rr = logTo stdout $ do
 
       go :: String -> ConI b -> StateT ContState (LoggingT m) b
 
-      go _ (ConIO _) = return $ error "You tried to use the result of an IO action during Map-Reduce operation. That's illegal."
+      go _ (ConIO f) = liftIO f
 
       go _ MakeTap = return $ tap "" serProtocol
       -- return $ error "MakeTap should not be used during Map-Reduce operation. That's illegal."
