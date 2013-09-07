@@ -264,3 +264,13 @@ hdfsGet HadoopSettings{..} p = do
     return tmpFile
 
 
+-------------------------------------------------------------------------------
+-- | Copy a file down to local FS, then stream its content.
+hdfsLocalStream :: MonadIO m => HadoopSettings -> FilePath -> Producer m ByteString
+hdfsLocalStream set fp = do
+    random <- liftIO $ hdfsGet set fp
+    h <- liftIO $ openFile random  ReadMode
+    sourceHandle h
+
+
+

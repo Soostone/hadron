@@ -141,7 +141,6 @@ getFileName :: MonadIO m => m FilePath
 getFileName = liftIO $ getEnv "map_input_file"
 
 
-
 -- | Construct a mapper program using given serialization Prism.
 mapperWith
     :: (MonadIO m, MonadUnsafeIO m)
