@@ -387,11 +387,15 @@ hadoopMain c@(Controller p) hs mrs rr = logTo stdout $ do
 
       go _ (ConIO f) = liftIO f
 
-      go _ MakeTap = return $ tap "" serProtocol
-      -- return $ error "MakeTap should not be used during Map-Reduce operation. That's illegal."
+      go _ MakeTap = do
+          loc <- liftIO randomFilename
+          return $ Tap loc serProtocol
+      --go _ MakeTap = return $ error "MakeTap should not be used during Map-Reduce operation. That's illegal."
 
-      go _ (BinaryDirTap _) = return $ tap "" idProtocol
-      -- return $ error "BinaryDirTap should not be used during Map-Reduce operation. That's illegal."
+      go _ (BinaryDirTap _) = liftIO $ do
+          listFile <- randomFilename
+          return $ fileListTap hs listFile
+      --go _ (BinaryDirTap _) = return $ error "BinaryDirTap should not be used during Map-Reduce operation. That's illegal."
 
       go arg (Connect (MapReduce mro mp rd) inp outp) = do
           mrKey <- newMRKey
