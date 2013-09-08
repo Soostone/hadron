@@ -205,7 +205,7 @@ data ConI a where
             -> [Tap IO i] -> Tap IO o
             -> ConI ()
 
-    MakeTap :: Serialize a => ConI (Tap IO a)
+    MakeTap :: Protocol' IO a -> ConI (Tap IO a)
     BinaryDirTap :: Location -> ConI (Tap IO B.ByteString)
 
     ConIO :: IO a -> ConI a
@@ -227,9 +227,16 @@ newtype Controller a = Controller { unController :: Program ConI a }
 -------------------------------------------------------------------------------
 -- | Connect a MapReduce program to a set of inputs, returning the
 -- output tap that was implicity generated (on hdfs) in the process.
-connect' :: Serialize b => MapReduce a IO b -> [Tap IO a] -> Controller (Tap IO b)
-connect' mr inp = do
-    out <- makeTap
+connect'
+    :: MapReduce a IO b
+    -- ^ MapReduce step to run
+    -> [Tap IO a]
+    -- ^ Input files
+    -> Protocol' IO b
+    -- ^ Serialization protocol to be used on the output
+    -> Controller (Tap IO b)
+connect' mr inp proto = do
+    out <- makeTap proto
     connect mr inp out
     return out
 
@@ -242,8 +249,8 @@ connect mr inp outp = Controller $ singleton $ Connect mr inp outp
 
 
 -------------------------------------------------------------------------------
-makeTap :: Serialize a => Controller (Tap IO a)
-makeTap = Controller $ singleton MakeTap
+makeTap :: Protocol' IO a -> Controller (Tap IO a)
+makeTap proto = Controller $ singleton $ MakeTap proto
 
 
 -------------------------------------------------------------------------------
@@ -306,9 +313,9 @@ orchestrate (Controller p) settings rr s = evalStateT (runEitherT (go p)) s
 
       eval' (ConIO f) = liftIO f
 
-      eval' MakeTap = do
+      eval' (MakeTap proto) = do
           loc <- liftIO randomFilename
-          return $ Tap loc serProtocol
+          return $ Tap loc proto
 
       eval' (BinaryDirTap loc) = liftIO $ do
           localFile <- setupBinaryDir settings loc
@@ -396,9 +403,9 @@ hadoopMain c@(Controller p) hs rr = logTo stdout $ do
 
       go _ (ConIO f) = liftIO f
 
-      go _ MakeTap = do
+      go _ (MakeTap proto) = do
           loc <- liftIO randomFilename
-          return $ Tap loc serProtocol
+          return $ Tap loc proto
       --go _ MakeTap = return $ error "MakeTap should not be used during Map-Reduce operation. That's illegal."
 
       go _ (BinaryDirTap _) = liftIO $ do
