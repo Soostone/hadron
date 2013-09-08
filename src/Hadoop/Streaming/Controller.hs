@@ -94,6 +94,7 @@ import qualified Data.Map                    as M
 import           Data.Monoid
 import           Data.Serialize
 import qualified Data.Text                   as T
+import           Data.Text.Encoding
 import           System.Directory
 import           System.Environment
 import           System.FilePath
@@ -269,7 +270,10 @@ setupBinaryDir settings loc = do
     localFile <- randomFilename
     files <- hdfsLs settings loc
     let suffix = lcs loc (head files)
-        prefix = take (length loc - length suffix) loc
+        locBS = encodeUtf8 $ T.pack loc
+        suffixBS = encodeUtf8 $ T.pack suffix
+        prefixBS = maybe locBS (\i -> B.take i locBS) $ B.findSubstring suffixBS locBS
+        prefix = T.unpack $ decodeUtf8 prefixBS
         paths = map (prefix++) files
     createDirectoryIfMissing True $ dropFileName localFile
     writeFile localFile $ unlines paths
