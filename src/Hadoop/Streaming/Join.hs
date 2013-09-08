@@ -113,8 +113,8 @@ emitStream Streaming{..} a = V.mapM_ (yield . mappend a) strStems
 emitStream _ _ = error "emitStream can't be called unless it's in Streaming mode."
 
 -------------------------------------------------------------------------------
-joinOpts :: Serialize a => MROptions a
-joinOpts = MROptions eq (Partition 2 1) pSerialize
+joinOpts :: MROptions
+joinOpts = def { mroEq = eq, mroPart = (Partition 2 1) }
     where
       eq [a1,_] [b1,_] = a1 == b1
       eq _ _ = error "joinOpts equality received an unexpected pattern"
@@ -249,7 +249,7 @@ joinMain
     -> Prism' B.ByteString r
     -- ^ Choose serialization method for final output.
     -> m ()
-joinMain fs getDS mkMap out = mapReduceMain joinOpts mp rd
+joinMain fs getDS mkMap out = mapReduceMain joinOpts pSerialize mp rd
     where
 
       mp = joinMapper getDS mkMap

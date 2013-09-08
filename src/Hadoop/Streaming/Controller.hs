@@ -33,17 +33,17 @@ module Hadoop.Streaming.Controller
 
     -- * Command Line Entry Point
       hadoopMain
-    , HadoopSettings (..)
+    , HadoopEnv (..)
     , clouderaDemo
     , amazonEMR
 
-    -- * Base Settings for MapReduce Jobs
-    , MRSettings
-    , mrsPart
-    , mrsNumMap
-    , mrsNumReduce
-    , mrsCompress
-    , mrsCodec
+    -- * Settings for MapReduce Jobs
+    , MROptions
+    , mroEq
+    , mroPart
+    , mroNumMap
+    , mroNumReduce
+    , mroCompress
     , gzipCodec
     , snappyCodec
 
@@ -114,7 +114,12 @@ import           Hadoop.Streaming.Types
 -- | A packaged MapReduce step. Make one of these for each distinct
 -- map-reduce step in your overall 'Controller' flow.
 data MapReduce a m b = forall v. MapReduce {
-      mrOptions :: MROptions v
+      mrOptions :: MROptions
+    -- ^ Hadoop and MapReduce options affecting only this specific
+    -- job.
+    , mrInPrism :: Prism' B.ByteString v
+    -- ^ A serialization scheme for values between the map-reduce
+    -- steps.
     , mrMapper  :: Mapper a m v
     , mrReducer :: Reducer v m b
     }
@@ -157,7 +162,7 @@ tap = Tap
 
 ------------------------------------------------------------------------------
 -- | Conduit that takes in hdfs filenames and outputs the file contents.
-readHdfsFile :: HadoopSettings -> Conduit B.ByteString IO B.ByteString
+readHdfsFile :: HadoopEnv -> Conduit B.ByteString IO B.ByteString
 readHdfsFile settings = awaitForever $ \s3Uri -> do
     let uriStr = B.unpack s3Uri
     let getFile = hdfsLocalStream settings uriStr
@@ -172,7 +177,7 @@ readHdfsFile settings = awaitForever $ \s3Uri -> do
 -- limitation by instead making your input a list of file paths that contain
 -- binary data.  Then the file names get split by hadoop and each map job
 -- reads from those files as its first step.
-fileListTap :: HadoopSettings
+fileListTap :: HadoopEnv
             -> Location
             -- ^ A file containing a list of files to be used as input
             -> Tap IO B.ByteString
@@ -286,12 +291,11 @@ setupBinaryDir settings loc = do
 orchestrate
     :: (MonadIO m, MonadLogger m)
     => Controller a
-    -> HadoopSettings
-    -> MRSettings
+    -> HadoopEnv
     -> RerunStrategy
     -> ContState
     -> m (Either String a)
-orchestrate (Controller p) settings mrs rr s = evalStateT (runEitherT (go p)) s
+orchestrate (Controller p) settings rr s = evalStateT (runEitherT (go p)) s
     where
       go = eval . O.view
 
@@ -311,7 +315,7 @@ orchestrate (Controller p) settings mrs rr s = evalStateT (runEitherT (go p)) s
 
           return $ fileListTap settings localFile
 
-      eval' (Connect mr@(MapReduce mro _ _) inp outp) = go'
+      eval' (Connect mr@(MapReduce mro mrInPrism _ _) inp outp) = go'
           where
             go' = do
                 chk <- liftIO $ hdfsFileExists settings (location outp)
@@ -330,10 +334,10 @@ orchestrate (Controller p) settings mrs rr s = evalStateT (runEitherT (go p)) s
                         go''
             go'' = do
               mrKey <- newMRKey
+              let mrs = mrOptsToRunOpts mro
               launchMapReduce settings mrKey
                 mrs { mrsInput = map location inp
-                    , mrsOutput = location outp
-                    , mrsPart = mroPart mro }
+                    , mrsOutput = location outp }
 
 
 
@@ -366,17 +370,17 @@ instance Default RerunStrategy where
 hadoopMain
     :: forall m a. (MonadThrow m, MonadIO m)
     => Controller a
-    -> HadoopSettings
-    -- ^ Base hadoop configuration
-    -> MRSettings
-    -- ^ Base 'MRSettings' - jobs will build on this.
+    -- ^ The Hadoop streaming application to run.
+    -> HadoopEnv
+    -- ^ Hadoop environment info.
     -> RerunStrategy
+    -- ^ What to do if destination files already exist.
     -> m ()
-hadoopMain c@(Controller p) hs mrs rr = logTo stdout $ do
+hadoopMain c@(Controller p) hs rr = logTo stdout $ do
     args <- liftIO getArgs
     case args of
       [] -> do
-        res <- orchestrate c hs mrs rr def
+        res <- orchestrate c hs rr def
         liftIO $ either print (const $ putStrLn "Success.") res
       [arg] -> do
         _ <- evalStateT (interpretWithMonad (go arg) p) def
@@ -402,18 +406,18 @@ hadoopMain c@(Controller p) hs mrs rr = logTo stdout $ do
           return $ fileListTap hs listFile
       --go _ (BinaryDirTap _) = return $ error "BinaryDirTap should not be used during Map-Reduce operation. That's illegal."
 
-      go arg (Connect (MapReduce mro mp rd) inp outp) = do
+      go arg (Connect (MapReduce mro mrInPrism mp rd) inp outp) = do
           mrKey <- newMRKey
           case find ((== arg) . snd) $ mkArgs mrKey of
             Just (Map, _) -> do
               let inSer = proto $ head inp
                   logIn _ = liftIO $ hsEmitCounter "Map rows decoded" 1
-              liftIO $ (mapperWith (mroInPrism mro) $
+              liftIO $ (mapperWith mrInPrism $
                 protoDec inSer =$= performEvery 1 logIn =$= mp)
             Just (Reduce, _) -> do
               let outSer = proto outp
                   rd' = rd =$= protoEnc outSer
-              liftIO $ (reducerMain mro rd')
+              liftIO $ (reducerMain mro mrInPrism rd')
             Nothing -> return ()
 
 
@@ -438,7 +442,7 @@ joinStep
     => [(Tap m a, JoinType, Conduit a m (JoinKey, b))]
     -- ^ Dataset definitions and how to map each dataset.
     -> MapReduce a m b
-joinStep fs = MapReduce joinOpts mp rd
+joinStep fs = MapReduce joinOpts pSerialize mp rd
     where
       salt = 0
       showBS = B.pack . show

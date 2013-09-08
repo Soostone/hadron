@@ -43,7 +43,6 @@ module Hadoop.Streaming
     , mapReduceMain
     , mapReduce
     , MROptions (..)
-    , defMRO
     , PartitionStrategy (..)
 
     -- * Low-level Utilities
@@ -194,14 +193,15 @@ mapper f = do
 -- here and we tag each bytestring line with a newline.
 reducerMain
     :: (MonadIO m, MonadThrow m, MonadUnsafeIO m)
-    => MROptions a
+    => MROptions
+    -> Prism' B.ByteString a
     -> Reducer a m B.ByteString
     -- ^ Important: It is assumed that each 'ByteString' here will end
     -- (your responsibility) with a newline, therefore constituting a
     -- line for the Hadoop ecosystem.
     -> m ()
-reducerMain mro@MROptions{..} g =
-    reducer mro g $=
+reducerMain mro@MROptions{..} mrInPrism g =
+    reducer mro mrInPrism g $=
     -- C.map write $=
     -- builderToByteString $=
     C.mapM_ emitOutput $$
@@ -216,11 +216,13 @@ reducerMain mro@MROptions{..} g =
 -- arguments and you're done.
 reducer
     :: (MonadIO m, MonadThrow m)
-    => MROptions a
+    => MROptions
+    -> Prism' B.ByteString a
+    -- ^ Input conversion function
     -> Reducer a m B.ByteString
     -- ^ A step function for the given key.
     -> Source m B.ByteString
-reducer MROptions{..} f = do
+reducer MROptions{..} mrInPrism f = do
     liftIO $ hSetBuffering stderr LineBuffering
     liftIO $ hSetBuffering stdout LineBuffering
     liftIO $ hSetBuffering stdin LineBuffering
@@ -261,7 +263,7 @@ reducer MROptions{..} f = do
       stream = sourceHandle stdin =$=
                lineC (numSegs mroPart) =$=
                performEvery every logIn =$=
-               C.mapMaybe (_2 (firstOf mroInPrism)) =$=
+               C.mapMaybe (_2 (firstOf mrInPrism)) =$=
                performEvery every logConv =$=
                go2 =$=
                performEvery every logOut
@@ -278,22 +280,16 @@ reducer MROptions{..} f = do
 -------------------------------------------------------------------------------
 mapReduce
     :: (MonadIO m, MonadThrow m, MonadUnsafeIO m)
-    => MROptions a
+    => MROptions
+    -> Prism' B.ByteString a
+    -- ^ Serialization for data between map and reduce stages
     -> Mapper B.ByteString m a
     -> Reducer a m B.ByteString
     -> (m (), m ())
-mapReduce mro f g = (mp, rd)
+mapReduce mro mrInPrism f g = (mp, rd)
     where
-      mp = mapperWith (mroInPrism mro) f
-      rd = reducerMain mro g
-
-
--------------------------------------------------------------------------------
--- | A default 'MROptions' safe to use for most jobs. Uses 'Eq' for
--- equivalence, doesn't partition keys and uses a safe Base64 encoded
--- serialization in between map-reduce steps.
-defMRO :: Ser.Serialize a => MROptions a
-defMRO = MROptions (==) def pSerialize
+      mp = mapperWith mrInPrism f
+      rd = reducerMain mro mrInPrism g
 
 
 
@@ -307,14 +303,16 @@ defMRO = MROptions (==) def pSerialize
 -- > ./myProgram reduce
 mapReduceMain
     :: (MonadIO m, MonadThrow m, MonadUnsafeIO m)
-    => MROptions a
+    => MROptions
+    -> Prism' B.ByteString a
+    -- ^ Serialization function for the in-between data 'a'.
     -> Mapper B.ByteString m a
     -> Reducer a m B.ByteString
     -- ^ Reducer for a stream of values belonging to the same key.
     -> m ()
-mapReduceMain mro f g = liftIO (execParser opts) >>= run
+mapReduceMain mro mrInPrism f g = liftIO (execParser opts) >>= run
   where
-    (mp,rd) = mapReduce mro f g
+    (mp,rd) = mapReduce mro mrInPrism f g
 
     run Map = mp
     run Reduce = rd

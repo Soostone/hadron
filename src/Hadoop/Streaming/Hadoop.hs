@@ -17,14 +17,14 @@
 
 
 module Hadoop.Streaming.Hadoop
-    ( HadoopSettings (..)
+    ( HadoopEnv (..)
     , clouderaDemo
     , amazonEMR
 
     , PartitionStrategy (..)
     , numSegs
 
-    , MRSettings (..)
+    , HadoopRunOpts (..)
     , mrSettings
 
     , Codec
@@ -63,23 +63,23 @@ import           System.Process
 -------------------------------------------------------------------------------
 
 
-data HadoopSettings = HadoopSettings {
+data HadoopEnv = HadoopEnv {
       hsBin :: String
     , hsJar :: String
     }
 
 
 -- | Settings for the cloudera demo VM.
-clouderaDemo :: HadoopSettings
-clouderaDemo = HadoopSettings {
+clouderaDemo :: HadoopEnv
+clouderaDemo = HadoopEnv {
             hsBin = "hadoop"
           , hsJar = "/usr/lib/hadoop-0.20-mapreduce/contrib/streaming/hadoop-streaming-2.0.0-mr1-cdh4.2.0.jar"
           }
 
 
 -- | Settings for Amazon's EMR instances.
-amazonEMR :: HadoopSettings
-amazonEMR = HadoopSettings {
+amazonEMR :: HadoopEnv
+amazonEMR = HadoopEnv {
               hsBin = "/home/hadoop/bin/hadoop"
             , hsJar = "/home/hadoop/contrib/streaming/hadoop-streaming.jar"
             }
@@ -103,27 +103,26 @@ numSegs NoPartition = 1
 numSegs Partition{..} = keySegs
 
 
-data MRSettings = MRSettings {
+data HadoopRunOpts = HadoopRunOpts {
       mrsInput     :: [String]
     , mrsOutput    :: String
     , mrsPart      :: PartitionStrategy
     , mrsNumMap    :: Maybe Int
     , mrsNumReduce :: Maybe Int
-    , mrsCompress  :: Bool
-    , mrsCodec     :: String
+    , mrsCompress  :: Maybe String
     }
 
-instance Default MRSettings where
-    def = MRSettings [] "" def Nothing Nothing False snappyCodec
+instance Default HadoopRunOpts where
+    def = HadoopRunOpts [] "" def Nothing Nothing Nothing
 
--- | A simple starting point to defining 'MRSettings'
+-- | A simple starting point to defining 'HadoopRunOpts'
 mrSettings
     :: [String]
     -- ^ Input files
     -> String
     -- ^ Output files
-    -> MRSettings
-mrSettings ins out = MRSettings ins out NoPartition Nothing Nothing False gzipCodec
+    -> HadoopRunOpts
+mrSettings ins out = HadoopRunOpts ins out NoPartition Nothing Nothing Nothing
 
 
 type Codec = String
@@ -142,11 +141,11 @@ type MapReduceKey = String
 -------------------------------------------------------------------------------
 launchMapReduce
     :: (MonadIO m, MonadLogger m)
-    => HadoopSettings
+    => HadoopEnv
     -> MapReduceKey
-    -> MRSettings
+    -> HadoopRunOpts
     -> EitherT String m ()
-launchMapReduce HadoopSettings{..} mrKey MRSettings{..} = do
+launchMapReduce HadoopEnv{..} mrKey HadoopRunOpts{..} = do
     exec <- scriptIO getExecutablePath
     prog <- scriptIO getProgName
     lift $ $(logInfo) $ T.concat ["Launching Hadoop job for MR key: ", T.pack mrKey]
@@ -179,13 +178,13 @@ launchMapReduce HadoopSettings{..} mrKey MRSettings{..} = do
       numRed = maybe [] (\x -> ["-D", "mapred.reduce.tasks=" ++ show x]) mrsNumReduce
 
       compress =
-        if mrsCompress
-          then [ "-D", "mapred.output.compress=true"
-               , "-D", "mapred.output.compression.codec=" ++ mrsCodec
-               -- , "-D", "mapred.compress.map.output=true"
-               -- , "-D", "mapred.map.output.compression.codec=" ++ mrsCodec
-               ]
-          else []
+        case mrsCompress of
+          Just codec -> [ "-D", "mapred.output.compress=true"
+                        , "-D", "mapred.output.compression.codec=" ++ codec
+                        -- , "-D", "mapred.compress.map.output=true"
+                        -- , "-D", "mapred.map.output.compression.codec=" ++ mrsCodec
+                        ]
+          Nothing -> []
 
       part = case mrsPart of
                NoPartition -> []
@@ -199,8 +198,8 @@ launchMapReduce HadoopSettings{..} mrKey MRSettings{..} = do
 
 -------------------------------------------------------------------------------
 -- | Check if the target file is present.
-hdfsFileExists :: HadoopSettings -> FilePath -> IO Bool
-hdfsFileExists HadoopSettings{..} p = do
+hdfsFileExists :: HadoopEnv -> FilePath -> IO Bool
+hdfsFileExists HadoopEnv{..} p = do
     res <- rawSystem hsBin ["fs", "-stat", p]
     return $ case res of
       ExitSuccess -> True
@@ -210,16 +209,16 @@ hdfsFileExists HadoopSettings{..} p = do
 
 -------------------------------------------------------------------------------
 -- | Check if the target file is present.
-hdfsDeletePath :: HadoopSettings -> FilePath -> IO ExitCode
-hdfsDeletePath HadoopSettings{..} p =
+hdfsDeletePath :: HadoopEnv -> FilePath -> IO ExitCode
+hdfsDeletePath HadoopEnv{..} p =
     rawSystem hsBin ["fs", "-rmr", "-skipTrash", p]
 
 
 
 -------------------------------------------------------------------------------
 -- | Check if the target file is present.
-hdfsLs :: HadoopSettings -> FilePath -> IO [FilePath]
-hdfsLs HadoopSettings{..} p = do
+hdfsLs :: HadoopEnv -> FilePath -> IO [FilePath]
+hdfsLs HadoopEnv{..} p = do
     (res,out,_) <- readProcessWithExitCode hsBin ["fs", "-ls", p] ""
     return $ case res of
       ExitSuccess -> filter (not . null) $ map (drop 43) $ lines out
@@ -228,8 +227,8 @@ hdfsLs HadoopSettings{..} p = do
 
 -------------------------------------------------------------------------------
 -- | Check if the target file is present.
-hdfsPut :: HadoopSettings -> FilePath -> FilePath -> IO ExitCode
-hdfsPut HadoopSettings{..} localPath hdfsPath =
+hdfsPut :: HadoopEnv -> FilePath -> FilePath -> IO ExitCode
+hdfsPut HadoopEnv{..} localPath hdfsPath =
     rawSystem hsBin ["fs", "-put", localPath, hdfsPath]
 
 
@@ -238,8 +237,8 @@ hdfsPut HadoopSettings{..} localPath hdfsPath =
 --
 -- NOTE: It appears that this function may output a header before the file
 -- contents.  Be careful!
-hdfsCat :: MonadIO m => HadoopSettings -> FilePath -> Producer m ByteString
-hdfsCat HadoopSettings{..} p = do
+hdfsCat :: MonadIO m => HadoopEnv -> FilePath -> Producer m ByteString
+hdfsCat HadoopEnv{..} p = do
     (inH, outH, errH, ph) <- liftIO $ do
       let cp = (proc hsBin ["fs", "-cat", p]) { std_in = CreatePipe
                                               , std_out = CreatePipe
@@ -266,8 +265,8 @@ tmpRoot = "/tmp/hadoop-streaming/"
 
 -------------------------------------------------------------------------------
 -- | Copy file from HDFS to a temporary local file whose name is returned.
-hdfsGet :: HadoopSettings -> FilePath -> IO FilePath
-hdfsGet HadoopSettings{..} p = do
+hdfsGet :: HadoopEnv -> FilePath -> IO FilePath
+hdfsGet HadoopEnv{..} p = do
     tmpFile <- randomFilename
     createDirectoryIfMissing True tmpRoot
     rawSystem hsBin ["fs", "-get", p, tmpFile]
@@ -276,7 +275,7 @@ hdfsGet HadoopSettings{..} p = do
 
 -------------------------------------------------------------------------------
 -- | Copy a file down to local FS, then stream its content.
-hdfsLocalStream :: MonadIO m => HadoopSettings -> FilePath -> Producer m ByteString
+hdfsLocalStream :: MonadIO m => HadoopEnv -> FilePath -> Producer m ByteString
 hdfsLocalStream set fp = do
     random <- liftIO $ hdfsGet set fp
     h <- liftIO $ openFile random ReadMode
