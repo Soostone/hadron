@@ -290,6 +290,8 @@ hdfsLocalStream set fp = do
     random <- liftIO $ hdfsGet set fp
     h <- liftIO $ openFile random ReadMode
     sourceHandle h
+    liftIO $ hClose h
+    liftIO $ removeFile random
 
 
 
