@@ -61,11 +61,18 @@ data MROptions = MROptions {
     -- ^ Number of reduce tasks; 'Nothing' leaves it to Hadoop to decide.
     , mroCompress  :: Maybe String
     -- ^ Whether to use compression on reduce output.
+    , mroOutSep    :: Maybe Char
+    -- ^ Separator to be communicated to Hadoop for the reduce output.
+    -- Sets both the 'stream.reduce.output.field.separator' and
+    -- 'mapred.textoutputformat.separator' parameters. Sometimes
+    -- useful to trick Hadoop into agreeing that the reduce output has
+    -- both a key and a value, therefore avoiding the trailing
+    -- separator forcefully inserted by Hadoop.
     }
 
 
 instance Default MROptions where
-    def = MROptions (==) NoPartition Nothing Nothing Nothing
+    def = MROptions (==) NoPartition Nothing Nothing Nothing Nothing
 
 
 -------------------------------------------------------------------------------
@@ -74,4 +81,5 @@ mrOptsToRunOpts :: MROptions -> HadoopRunOpts
 mrOptsToRunOpts MROptions{..} = def { mrsPart = mroPart
                                     , mrsNumMap = mroNumMap
                                     , mrsNumReduce = mroNumReduce
-                                    , mrsCompress = mroCompress }
+                                    , mrsCompress = mroCompress
+                                    , mrsOutSep = mroOutSep }

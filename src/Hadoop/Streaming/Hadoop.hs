@@ -103,6 +103,7 @@ numSegs NoPartition = 1
 numSegs Partition{..} = keySegs
 
 
+
 data HadoopRunOpts = HadoopRunOpts {
       mrsInput     :: [String]
     , mrsOutput    :: String
@@ -110,10 +111,14 @@ data HadoopRunOpts = HadoopRunOpts {
     , mrsNumMap    :: Maybe Int
     , mrsNumReduce :: Maybe Int
     , mrsCompress  :: Maybe String
+    , mrsOutSep    :: Maybe Char
+    -- ^ A separator to be used in reduce output. It is sometimes
+    -- useful to specify one to trick Hadoop.
     }
 
+
 instance Default HadoopRunOpts where
-    def = HadoopRunOpts [] "" def Nothing Nothing Nothing
+    def = HadoopRunOpts [] "" def Nothing Nothing Nothing Nothing
 
 -- | A simple starting point to defining 'HadoopRunOpts'
 mrSettings
@@ -122,7 +127,7 @@ mrSettings
     -> String
     -- ^ Output files
     -> HadoopRunOpts
-mrSettings ins out = HadoopRunOpts ins out NoPartition Nothing Nothing Nothing
+mrSettings ins out = def { mrsInput = ins, mrsOutput = out }
 
 
 type Codec = String
@@ -163,7 +168,7 @@ launchMapReduce HadoopEnv{..} mrKey HadoopRunOpts{..} = do
     where
       mkArgs exec prog =
             [ "jar", hsJar] ++
-            compress ++ numMap ++ numRed ++ part ++
+            compress ++ numMap ++ numRed ++ part ++ outSep ++
             inputs ++
             [ "-output", mrsOutput
             , "-mapper", "\"" ++ prog ++ " map_" ++ mrKey ++ "\""
@@ -194,6 +199,11 @@ launchMapReduce HadoopEnv{..} mrKey HadoopRunOpts{..} = do
                  , "-partitioner", "org.apache.hadoop.mapred.lib.KeyFieldBasedPartitioner"
                  ]
 
+      outSep = case mrsOutSep of
+                 Nothing -> []
+                 Just sep -> [ "-D", "stream.reduce.output.field.separator=" ++ "'" ++ [sep] ++ "'"
+                             , "-D", "mapred.textoutputformat.separator=" ++ "'" ++ [sep] ++ "'"
+                             ]
 
 
 -------------------------------------------------------------------------------
