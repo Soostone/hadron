@@ -277,7 +277,7 @@ setupBinaryDir settings loc = do
         paths = map (prefix++) files
     createDirectoryIfMissing True $ dropFileName localFile
     writeFile localFile $ unlines paths
-    _ <- hdfsPut settings localFile localFile
+    hdfsPut settings localFile localFile
     return localFile
 
 
@@ -308,6 +308,7 @@ orchestrate (Controller p) settings mrs rr s = evalStateT (runEitherT (go p)) s
 
       eval' (BinaryDirTap loc) = liftIO $ do
           localFile <- setupBinaryDir settings loc
+
           return $ fileListTap settings localFile
 
       eval' (Connect mr@(MapReduce mro _ _) inp outp) = go'

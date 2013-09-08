@@ -40,7 +40,7 @@ module Hadoop.Streaming.Hadoop
     , hdfsPut
     , hdfsCat
     , hdfsGet
-    , hdfsLocalStream 
+    , hdfsLocalStream
     ) where
 
 -------------------------------------------------------------------------------
@@ -55,6 +55,7 @@ import           Data.Default
 import           Data.List
 import           Data.RNG
 import qualified Data.Text             as T
+import           System.Directory
 import           System.Environment
 import           System.Exit
 import           System.IO
@@ -256,7 +257,11 @@ hdfsCat HadoopSettings{..} p = do
 randomFilename :: IO FilePath
 randomFilename = do
     tk <- mkRNG >>= randomToken 64
-    return $ B.unpack $ B.concat ["/tmp/hadoop-streaming/", tk]
+    return $ B.unpack $ B.concat [B.pack tmpRoot, tk]
+
+
+tmpRoot :: FilePath
+tmpRoot = "/tmp/hadoop-streaming/"
 
 
 -------------------------------------------------------------------------------
@@ -264,6 +269,7 @@ randomFilename = do
 hdfsGet :: HadoopSettings -> FilePath -> IO FilePath
 hdfsGet HadoopSettings{..} p = do
     tmpFile <- randomFilename
+    createDirectoryIfMissing True tmpRoot
     rawSystem hsBin ["fs", "-get", p, tmpFile]
     return tmpFile
 
@@ -273,7 +279,7 @@ hdfsGet HadoopSettings{..} p = do
 hdfsLocalStream :: MonadIO m => HadoopSettings -> FilePath -> Producer m ByteString
 hdfsLocalStream set fp = do
     random <- liftIO $ hdfsGet set fp
-    h <- liftIO $ openFile random  ReadMode
+    h <- liftIO $ openFile random ReadMode
     sourceHandle h
 
 
