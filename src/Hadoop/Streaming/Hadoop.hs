@@ -201,8 +201,8 @@ launchMapReduce HadoopEnv{..} mrKey HadoopRunOpts{..} = do
 
       outSep = case mrsOutSep of
                  Nothing -> []
-                 Just sep -> [ "-D", "stream.reduce.output.field.separator=" ++ "'" ++ [sep] ++ "'"
-                             , "-D", "mapred.textoutputformat.separator=" ++ "'" ++ [sep] ++ "'"
+                 Just sep -> [ "-D", "stream.reduce.output.field.separator=" ++ [sep]
+                             , "-D", "mapred.textoutputformat.separator=" ++ [sep]
                              ]
 
 
