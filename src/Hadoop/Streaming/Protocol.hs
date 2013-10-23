@@ -8,9 +8,9 @@ module Hadoop.Streaming.Protocol
     , Protocol'
     , prismToProtocol
 
+    , base64SerProtocol
     , idProtocol
     , linesProtocol
-    , serProtocol
     , gzipProtocol
     , showProtocol
     , csvProtocol
@@ -30,7 +30,6 @@ module Hadoop.Streaming.Protocol
 
 
     ) where
-
 
 -------------------------------------------------------------------------------
 import           Blaze.ByteString.Builder
@@ -90,8 +89,8 @@ instance Monad m => Category (Protocol m) where
 -------------------------------------------------------------------------------
 -- | Lift 'Prism' to work with a newline-separated stream of objects.
 --
--- It is assumed that the prism you supply to this function do not add
--- newlines themselves. You need to make them newline-free for this to
+-- It is assumed that the prism you supply to this function does not
+-- add newlines itself. You need to make them newline-free for this to
 -- work properly.
 prismToProtocol
     :: (MonadUnsafeIO m, MonadThrow m)
@@ -122,9 +121,10 @@ linesProtocol = Protocol { protoEnc = C.map (\x -> B.concat [x, "\n"])
 -------------------------------------------------------------------------------
 -- | Channel the 'Serialize' instance through 'Base64' encoding to
 -- make it newline-safe, then turn into newline-separated stream.
-serProtocol :: (MonadUnsafeIO m, MonadThrow m, Ser.Serialize a)
-            => Protocol' m a
-serProtocol = prismToProtocol pSerialize
+base64SerProtocol
+    :: (MonadUnsafeIO m, MonadThrow m, Ser.Serialize a)
+    => Protocol' m a
+base64SerProtocol = prismToProtocol pSerialize
 
 
 -------------------------------------------------------------------------------
@@ -153,7 +153,8 @@ showProtocol :: (MonadUnsafeIO m, MonadThrow m, Read a, Show a)
 showProtocol = prismToProtocol pShow
 
 
--- | Helper for reliable serialization
+-- | Helper for reliable serialization through Base64 encoding so it
+-- is newline-free.
 serialize :: Ser.Serialize a => a -> B.ByteString
 serialize = Base64.encode . Ser.encode
 
