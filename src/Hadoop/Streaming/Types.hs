@@ -5,7 +5,6 @@
 module Hadoop.Streaming.Types where
 
 -------------------------------------------------------------------------------
-import           Control.Lens
 import qualified Data.ByteString.Char8   as B
 import           Data.Conduit
 import           Data.Default
@@ -14,8 +13,6 @@ import           Hadoop.Streaming.Hadoop
 -------------------------------------------------------------------------------
 
 type Key = B.ByteString
-
-type Value = B.ByteString
 
 type CompositeKey = [Key]
 
@@ -68,6 +65,10 @@ data MROptions = MROptions {
     -- useful to trick Hadoop into agreeing that the reduce output has
     -- both a key and a value, therefore avoiding the trailing
     -- separator forcefully inserted by Hadoop.
+    --
+    -- If you're outputting CSV for example, you may want to specify
+    -- 'Just ,' here so that with 2 fields Hadoop will think you
+    -- already have the key-value pair.
     }
 
 

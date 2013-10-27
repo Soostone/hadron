@@ -37,17 +37,13 @@ import           Control.Applicative
 import           Control.Category
 import           Control.Lens
 import           Control.Monad
-import           Control.Monad.Trans
 import           Data.Attoparsec.ByteString.Char8 (Parser, endOfLine, takeTill)
 import qualified Data.ByteString.Base64           as Base64
 import qualified Data.ByteString.Char8            as B
-import qualified Data.ByteString.Lazy.Char8       as LB
 import           Data.Conduit
 import           Data.Conduit.Attoparsec
-import           Data.Conduit.Binary              (sinkHandle, sourceHandle)
 import           Data.Conduit.Blaze
 import qualified Data.Conduit.List                as C
-import           Data.Conduit.Utils
 import           Data.Conduit.Zlib                (gzip, ungzip)
 import           Data.CSV.Conduit
 import           Data.Monoid

@@ -44,6 +44,7 @@ module Hadoop.Streaming.Controller
     , mroNumMap
     , mroNumReduce
     , mroCompress
+    , mroOutSep
     , gzipCodec
     , snappyCodec
 
