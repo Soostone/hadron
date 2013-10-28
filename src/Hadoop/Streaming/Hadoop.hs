@@ -225,7 +225,7 @@ hdfsFileExists HadoopEnv{..} p = do
 -- | Check if the target file is present.
 hdfsDeletePath :: HadoopEnv -> FilePath -> IO ExitCode
 hdfsDeletePath HadoopEnv{..} p =
-    rawSystem hsBin ["fs", "-rmr", "-skipTrash", p]
+    rawSystem hsBin ["fs", "-rm", "-r", "-skipTrash", p]
 
 
 
@@ -306,7 +306,7 @@ hdfsGet :: HadoopEnv -> FilePath -> IO FilePath
 hdfsGet HadoopEnv{..} p = do
     tmpFile <- randomFilename
     createDirectoryIfMissing True tmpRoot
-    rawSystem hsBin ["chmod", "a+rw", tmpRoot]
+    -- rawSystem hsBin ["chmod", "a+rw", tmpRoot]
     rawSystem hsBin ["fs", "-get", p, tmpFile]
     return tmpFile
 

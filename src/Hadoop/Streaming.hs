@@ -137,9 +137,10 @@ mapperWith
     => Prism' B.ByteString t
     -> Conduit B.ByteString m (CompositeKey, t)
     -> m ()
-mapperWith p f = mapper $ f =$= C.mapMaybe conv
+mapperWith p f = mapper $ f =$= C.map conv
     where
-      conv x = _2 (firstOf (re p)) x
+      -- conv x = _2 (firstOf (re p)) x
+      conv (k,v) = (k, review p v)
 
 
 

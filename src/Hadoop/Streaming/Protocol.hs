@@ -93,7 +93,7 @@ prismToProtocol
     => Prism' B.ByteString a
     -> Protocol' m a
 prismToProtocol p =
-    Protocol { protoEnc = C.mapMaybe (firstOf (re p)) =$= write
+    Protocol { protoEnc = C.map (review p) =$= write
              , protoDec = linesConduit =$= C.mapMaybe (firstOf p) }
   where
     write = C.map (\x -> fromByteString x `mappend` nl) =$=
