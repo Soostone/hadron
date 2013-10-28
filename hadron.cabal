@@ -1,5 +1,5 @@
 name:                hadron
-version:             0.1.1.0
+version:             0.2
 description:         Use Haskell programs for data processing with Hadoop
 license:             BSD3
 license-file:        LICENSE
@@ -57,7 +57,9 @@ library
      zlib-conduit,
      directory
 
-  ghc-options:         -Wall -O2 -fwarn-tabs
+  ghc-options:         -Wall -O2 
+                       -fwarn-tabs
+                       -fno-warn-unused-do-bind
   default-language:    Haskell2010
 
 

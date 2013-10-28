@@ -134,7 +134,7 @@ gzipProtocol = Protocol gzip ungzip
 -- | Protocol for converting to/from any stream type 'b' and CSV type 'a'.
 csvProtocol :: (MonadUnsafeIO m, MonadThrow m, CSV b a)
             => CSVSettings -> Protocol m b a
-csvProtocol set = Protocol (fromCSV set) (intoCSV set)
+csvProtocol cset = Protocol (fromCSV cset) (intoCSV cset)
 
 
 -------------------------------------------------------------------------------
@@ -160,7 +160,8 @@ deserialize :: Ser.Serialize c => B.ByteString -> Either String c
 deserialize = Ser.decode <=< Base64.decode
 
 
--- | Serialize with the 'Serialize' instance.
+-- | Serialize with the 'Serialize' instance coupled with Base64
+-- encoding, so it's free of restrictied characters.
 --
 -- Any 'Prism' can be used as follows:
 --

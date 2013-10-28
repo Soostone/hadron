@@ -31,8 +31,29 @@
 module Hadoop.Streaming.Controller
     (
 
+
+    -- * Hadoop Program Construction
+      Controller
+
+    , connect
+    , connect'
+    , io
+
+    , MapReduce (..)
+    , Mapper
+    , Reducer
+    , MRKey (..)
+    , SingleKey (..)
+    , Tap (..)
+    , Tap'
+    , tap
+    , binaryDirTap
+    , setupBinaryDir
+    , fileListTap
+    , readHdfsFile
+
     -- * Command Line Entry Point
-      hadoopMain
+    , hadoopMain
     , HadoopEnv (..)
     , clouderaDemo
     , amazonEMR
@@ -53,22 +74,6 @@ module Hadoop.Streaming.Controller
     -- * Logging Related
     , logTo
 
-    -- * Hadoop Program Construction
-    , Controller
-
-    , connect
-    , connect'
-    , io
-
-    , MapReduce (..)
-    , Tap (..)
-    , Tap'
-    , tap
-    , binaryDirTap
-    , setupBinaryDir
-    , fileListTap
-    , readHdfsFile
-
     -- * Joining Multiple Datasets
     , joinStep
     , JoinType (..)
@@ -84,7 +89,8 @@ import           Control.Monad.Operational   hiding (view)
 import qualified Control.Monad.Operational   as O
 import           Control.Monad.State
 import qualified Data.ByteString.Char8       as B
-import           Data.Conduit
+import           Data.Conduit                as C
+import qualified Data.Conduit.List           as C
 import           Data.Conduit.Utils
 import           Data.Conduit.Zlib
 import           Data.Default
@@ -110,19 +116,95 @@ import           Hadoop.Streaming.Types
 -------------------------------------------------------------------------------
 
 
+newtype SingleKey a = SingleKey { unKey :: a }
+    deriving (Eq,Show,Read,Ord,Serialize)
+
+
+mrKeyError i n =
+    error $ "Expected MapReduce key to have "
+         <> show i <> " parts. Instead received "
+         <> show n <> " parts."
+
+class MRKey k where
+    toCompKey :: k -> CompositeKey
+    fromCompKey :: CompositeKey -> Maybe k
+
+instance MRKey B.ByteString where
+    toCompKey k = [k]
+    fromCompKey [k] = Just k
+
+instance MRKey CompositeKey where
+    toCompKey ks = ks
+    fromCompKey ks = Just ks
+
+instance Serialize a => MRKey (SingleKey a) where
+    toCompKey a = [review pSerialize a]
+    fromCompKey [a] = preview pSerialize a
+    fromCompKey xs  = mrKeyError 1 (length xs)
+
+instance (Serialize a, Serialize b) => MRKey (a,b) where
+    toCompKey (a,b) = [review pSerialize a, review pSerialize b]
+    fromCompKey [a,b] = (,) <$> preview pSerialize a <*> preview pSerialize b
+    fromCompKey xs  = mrKeyError 2 (length xs)
+
+instance (Serialize a, Serialize b, Serialize c) => MRKey (a,b,c) where
+    toCompKey (a,b,c) = [review pSerialize a, review pSerialize b, review pSerialize c]
+    fromCompKey [a,b,c] = (,,)
+        <$> preview pSerialize a
+        <*> preview pSerialize b
+        <*> preview pSerialize c
+    fromCompKey xs  = mrKeyError 3 (length xs)
+
+instance (Serialize a, Serialize b, Serialize c, Serialize d) => MRKey (a,b,c,d) where
+    toCompKey (a,b,c,d) = [review pSerialize a, review pSerialize b, review pSerialize c, review pSerialize d]
+    fromCompKey [a,b,c,d] = (,,,)
+        <$> preview pSerialize a
+        <*> preview pSerialize b
+        <*> preview pSerialize c
+        <*> preview pSerialize d
+    fromCompKey xs  = mrKeyError 4 (length xs)
+
+instance (Serialize a, Serialize b, Serialize c, Serialize d, Serialize e) => MRKey (a,b,c,d,e) where
+    toCompKey (a,b,c,d,e) =
+        [ review pSerialize a, review pSerialize b, review pSerialize c
+        , review pSerialize d, review pSerialize e ]
+    fromCompKey [a,b,c,d,e] = (,,,,)
+        <$> preview pSerialize a
+        <*> preview pSerialize b
+        <*> preview pSerialize c
+        <*> preview pSerialize d
+        <*> preview pSerialize e
+    fromCompKey xs  = mrKeyError 5 (length xs)
+
+instance (Serialize a, Serialize b, Serialize c, Serialize d, Serialize e, Serialize f) => MRKey (a,b,c,d,e,f) where
+    toCompKey (a,b,c,d,e,f) =
+        [ review pSerialize a, review pSerialize b, review pSerialize c
+        , review pSerialize d, review pSerialize e, review pSerialize f]
+    fromCompKey [a,b,c,d,e,f] = (,,,,,)
+        <$> preview pSerialize a
+        <*> preview pSerialize b
+        <*> preview pSerialize c
+        <*> preview pSerialize d
+        <*> preview pSerialize e
+        <*> preview pSerialize f
+    fromCompKey xs  = mrKeyError 6 (length xs)
+
+
+
+
 
 -------------------------------------------------------------------------------
 -- | A packaged MapReduce step. Make one of these for each distinct
 -- map-reduce step in your overall 'Controller' flow.
-data MapReduce a m b = forall v. MapReduce {
+data MapReduce a m b = forall k v. MRKey k => MapReduce {
       mrOptions :: MROptions
     -- ^ Hadoop and MapReduce options affecting only this specific
     -- job.
     , mrInPrism :: Prism' B.ByteString v
     -- ^ A serialization scheme for values between the map-reduce
     -- steps.
-    , mrMapper  :: Mapper a m v
-    , mrReducer :: Reducer v m b
+    , mrMapper  :: Mapper a m k v
+    , mrReducer :: Reducer k v m b
     }
 
 
@@ -285,7 +367,7 @@ setupBinaryDir settings loc = do
     let suffix = lcs loc (head files)
         locBS = encodeUtf8 $ T.pack loc
         suffixBS = encodeUtf8 $ T.pack suffix
-        prefixBS = maybe locBS (\i -> B.take i locBS) $ B.findSubstring suffixBS locBS
+        prefixBS = fst $ B.breakSubstring suffixBS locBS
         prefix = T.unpack $ decodeUtf8 prefixBS
         paths = map (prefix++) files
     createDirectoryIfMissing True $ dropFileName localFile
@@ -417,15 +499,24 @@ hadoopMain c@(Controller p) hs rr = logTo stdout $ do
       go arg (Connect (MapReduce mro mrInPrism mp rd) inp outp) = do
           mrKey <- newMRKey
           case find ((== arg) . snd) $ mkArgs mrKey of
+
             Just (Map, _) -> do
               let inSer = proto $ head inp
                   logIn _ = liftIO $ hsEmitCounter "Map rows decoded" 1
               liftIO $ (mapperWith mrInPrism $
-                protoDec inSer =$= performEvery 1 logIn =$= mp)
+                protoDec inSer =$=
+                performEvery 1 logIn =$=
+                mp =$=
+                C.map (\ (k, v) -> (toCompKey k, v)))
+
             Just (Reduce, _) -> do
               let outSer = proto outp
-                  rd' = rd =$= protoEnc outSer
+                  conv (k,v) = do
+                      k' <- fromCompKey k
+                      return (k', v)
+                  rd' = C.mapMaybe conv =$= rd =$= protoEnc outSer
               liftIO $ (reducerMain mro mrInPrism rd')
+
             Nothing -> return ()
 
 

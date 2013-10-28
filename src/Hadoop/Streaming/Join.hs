@@ -126,7 +126,7 @@ joinReducer
     :: (Show r, Monoid r, MonadIO m, MonadThrow m)
     => [(DataSet, JoinType)]
     -- ^ Table definitions
-    -> Reducer r m r
+    -> Reducer CompositeKey r m r
 joinReducer fs = red def
     where
       red ja = do
@@ -179,8 +179,8 @@ joinReduceStep fs buf@Buffering{..} (k, x) =
       False -> -- traceShow accumulate $
                return $! accumulate
       True ->
-        let fs' = filter ((/= ds') . fst) fs
-        in joinReduceStep fs (bufToStr fs' buf) (k,x)
+        let xs = filter ((/= ds') . fst) fs
+        in joinReduceStep fs (bufToStr xs buf) (k,x)
 
     where
 
@@ -208,7 +208,7 @@ joinMapper
     :: MonadIO m
     => (String -> DataSet)
     -> (DataSet -> Conduit a m (JoinKey, r))
-    -> Mapper a m r
+    -> Mapper a m CompositeKey r
 joinMapper getDS mkMap = do
     fi <- getFileName
     let ds = getDS fi

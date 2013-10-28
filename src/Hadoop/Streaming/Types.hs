@@ -26,7 +26,7 @@ mkKey = B.intercalate "|"
 -------------------------------------------------------------------------------
 -- | A 'Mapper' parses and converts the unbounded incoming stream of
 -- input into a stream of (key, value) pairs.
-type Mapper a m b     = Conduit a m (CompositeKey, b)
+type Mapper a m k b     = Conduit a m (k, b)
 
 
 -------------------------------------------------------------------------------
@@ -39,7 +39,7 @@ type Mapper a m b     = Conduit a m (CompositeKey, b)
 -- will be given to individual and isolated invocations of your
 -- reducer function. This is pretty much the key abstraction provided
 -- by this framework.
-type Reducer a m r  = Conduit (CompositeKey, a) m r
+type Reducer k a m r  = Conduit (k, a) m r
 
 
 -------------------------------------------------------------------------------
@@ -84,3 +84,4 @@ mrOptsToRunOpts MROptions{..} = def { mrsPart = mroPart
                                     , mrsNumReduce = mroNumReduce
                                     , mrsCompress = mroCompress
                                     , mrsOutSep = mroOutSep }
+

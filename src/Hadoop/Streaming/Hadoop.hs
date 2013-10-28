@@ -159,11 +159,11 @@ launchMapReduce HadoopEnv{..} mrKey HadoopRunOpts{..} = do
 
     lift $ $(logInfo) $ T.concat ["Hadoop arguments: ", T.pack (intercalate " " args)]
 
-    (code, out, err) <- scriptIO $ readProcessWithExitCode hsBin args ""
+    (code, out, eout) <- scriptIO $ readProcessWithExitCode hsBin args ""
     case code of
       ExitSuccess -> return ()
       e -> do
-        lift $ $(logError) $ T.intercalate "\n" ["Hadoop job failed.", "StdOut:", T.pack out, "", "StdErr:", T.pack err]
+        lift $ $(logError) $ T.intercalate "\n" ["Hadoop job failed.", "StdOut:", T.pack out, "", "StdErr:", T.pack eout]
         hoistEither $ Left $ "MR job failed with: " ++ show e
     where
       mkArgs exec prog =
@@ -249,15 +249,15 @@ hdfsPut HadoopEnv{..} localPath hdfsPath =
 -- contents.  Be careful!
 hdfsCat :: MonadIO m => HadoopEnv -> FilePath -> Producer m ByteString
 hdfsCat HadoopEnv{..} p = do
-    (inH, outH, errH, ph) <- liftIO $ do
+    (inH, outH, _, _) <- liftIO $ do
       let cp = (proc hsBin ["fs", "-cat", p]) { std_in = CreatePipe
                                               , std_out = CreatePipe
                                               , std_err = Inherit }
       createProcess cp
     maybe (return ()) (liftIO . hClose) inH
-    maybe err sourceHandle outH
+    maybe exit sourceHandle outH
   where
-    err = liftIO $
+    exit = liftIO $
       hPutStrLn stderr $ concat ["Could not open file ", p, ".  Skipping...."]
 
 
