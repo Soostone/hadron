@@ -43,6 +43,7 @@ module Hadoop.Streaming.Hadoop
     , hdfsCat
     , hdfsGet
     , hdfsLocalStream
+    , hdfsChmod
     ) where
 
 -------------------------------------------------------------------------------
@@ -254,6 +255,18 @@ hdfsPut HadoopEnv{..} localPath hdfsPath =
 -- | Create HDFS directory if missing
 hdfsMkdir :: HadoopEnv -> String -> IO ExitCode
 hdfsMkdir HadoopEnv{..} fp = rawSystem hsBin ["fs", "-mkdir", "-p", fp]
+
+
+-------------------------------------------------------------------------------
+-- | Apply recursive permissions to given
+hdfsChmod
+    :: HadoopEnv
+    -> String
+    -- ^ Target path
+    -> String
+    -- ^ Permissions string
+    -> IO ExitCode
+hdfsChmod HadoopEnv{..} fp mode = rawSystem hsBin ["fs", "-chmod", "-R", mode, fp]
 
 
 -------------------------------------------------------------------------------
