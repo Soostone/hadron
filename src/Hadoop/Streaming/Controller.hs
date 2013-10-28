@@ -85,23 +85,21 @@ module Hadoop.Streaming.Controller
 import           Control.Applicative
 import           Control.Error
 import           Control.Lens
-import           Control.Monad.Operational   hiding (view)
-import qualified Control.Monad.Operational   as O
+import           Control.Monad.Operational hiding (view)
+import qualified Control.Monad.Operational as O
 import           Control.Monad.State
-import qualified Data.ByteString.Char8       as B
-import           Data.Conduit                as C
-import qualified Data.Conduit.List           as C
+import qualified Data.ByteString.Char8     as B
+import           Data.Conduit              as C
+import qualified Data.Conduit.List         as C
 import           Data.Conduit.Utils
 import           Data.Conduit.Zlib
 import           Data.Default
 import           Data.Hashable
 import           Data.List
-import           Data.List.LCS.HuntSzymanski
-import qualified Data.Map                    as M
+import qualified Data.Map                  as M
 import           Data.Monoid
 import           Data.Serialize
-import qualified Data.Text                   as T
-import           Data.Text.Encoding
+import qualified Data.Text                 as T
 import           System.Directory
 import           System.Environment
 import           System.FilePath
@@ -111,7 +109,6 @@ import           Hadoop.Streaming
 import           Hadoop.Streaming.Hadoop
 import           Hadoop.Streaming.Join
 import           Hadoop.Streaming.Logger
-import           Hadoop.Streaming.Protocol
 import           Hadoop.Streaming.Types
 -------------------------------------------------------------------------------
 
@@ -120,6 +117,7 @@ newtype SingleKey a = SingleKey { unKey :: a }
     deriving (Eq,Show,Read,Ord,Serialize)
 
 
+mrKeyError :: Int -> Int -> a
 mrKeyError i n =
     error $ "Expected MapReduce key to have "
          <> show i <> " parts. Instead received "
@@ -132,6 +130,7 @@ class MRKey k where
 instance MRKey B.ByteString where
     toCompKey k = [k]
     fromCompKey [k] = Just k
+    fromCompKey xs  = mrKeyError 1 (length xs)
 
 instance MRKey CompositeKey where
     toCompKey ks = ks

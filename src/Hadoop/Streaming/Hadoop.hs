@@ -56,7 +56,6 @@ import           Data.Conduit
 import           Data.Conduit.Binary   (sourceHandle)
 import           Data.Default
 import           Data.List
-import           Data.List
 import           Data.RNG
 import qualified Data.Text             as T
 import           System.Directory

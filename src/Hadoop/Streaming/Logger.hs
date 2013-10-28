@@ -24,6 +24,7 @@ import           System.Posix.Process
 instance ToLogStr LogStr where
     toLogStr = id
 
+
 logTo :: MonadIO m => Handle -> (LoggingT m a) -> m a
 logTo h m = do
     le <- mkLogEnv h

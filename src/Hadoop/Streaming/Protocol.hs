@@ -77,8 +77,8 @@ data Protocol m b a = Protocol {
 
 instance Monad m => Category (Protocol m) where
     id = Protocol (C.map id) (C.map id)
-    p1 . p2 = Protocol { protoEnc = (protoEnc p1) =$= (protoEnc p2)
-                       , protoDec = (protoDec p2) =$= (protoDec p1) }
+    p1 . p2 = Protocol { protoEnc = protoEnc p1 =$= protoEnc p2
+                       , protoDec = protoDec p2 =$= protoDec p1 }
 
 
 
@@ -94,7 +94,7 @@ prismToProtocol
     -> Protocol' m a
 prismToProtocol p =
     Protocol { protoEnc = C.map (review p) =$= write
-             , protoDec = linesConduit =$= C.mapMaybe (firstOf p) }
+             , protoDec = linesConduit =$= C.mapMaybe (preview p) }
   where
     write = C.map (\x -> fromByteString x `mappend` nl) =$=
             builderToByteString
