@@ -364,16 +364,11 @@ newMRKey = do
 setupBinaryDir :: HadoopEnv -> FilePath -> IO FilePath
 setupBinaryDir settings loc = do
     localFile <- randomFilename
+    let root = dropFileName localFile
+    createDirectoryIfMissing True root
+    hdfsMkdir settings root
     files <- hdfsLs settings loc
-    let suffix = lcs loc (head files)
-        locBS = encodeUtf8 $ T.pack loc
-        suffixBS = encodeUtf8 $ T.pack suffix
-        prefixBS = fst $ B.breakSubstring suffixBS locBS
-        prefix = T.unpack $ decodeUtf8 prefixBS
-        paths = map (prefix++) files
-    createDirectoryIfMissing True $ dropFileName localFile
-    writeFile localFile $ unlines paths
-    hdfsMkdir settings tmpRoot           -- in case it is missing
+    writeFile localFile $ unlines files
     hdfsPut settings localFile localFile
     return localFile
 
