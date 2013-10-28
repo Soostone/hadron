@@ -38,6 +38,8 @@ module Hadoop.Streaming.Hadoop
     , hdfsDeletePath
     , hdfsLs
     , hdfsPut
+    , hdfsMkdir
+    , tmpRoot
     , hdfsCat
     , hdfsGet
     , hdfsLocalStream
@@ -52,6 +54,7 @@ import qualified Data.ByteString.Char8 as B
 import           Data.Conduit
 import           Data.Conduit.Binary   (sourceHandle)
 import           Data.Default
+import           Data.List
 import           Data.List
 import           Data.RNG
 import qualified Data.Text             as T
@@ -231,8 +234,12 @@ hdfsLs :: HadoopEnv -> FilePath -> IO [FilePath]
 hdfsLs HadoopEnv{..} p = do
     (res,out,_) <- readProcessWithExitCode hsBin ["fs", "-ls", p] ""
     return $ case res of
-      ExitSuccess -> filter (not . null) $ map (drop 43) $ lines out
+      ExitSuccess -> filter isOK $ map clean $ lines out
       ExitFailure{} -> []
+  where
+    prefix = takeWhile (/= '*') p
+    isOK x = isPrefixOf prefix x
+    clean xs = last (words xs)
 
 
 -------------------------------------------------------------------------------
@@ -240,6 +247,13 @@ hdfsLs HadoopEnv{..} p = do
 hdfsPut :: HadoopEnv -> FilePath -> FilePath -> IO ExitCode
 hdfsPut HadoopEnv{..} localPath hdfsPath =
     rawSystem hsBin ["fs", "-put", localPath, hdfsPath]
+
+
+
+-------------------------------------------------------------------------------
+-- | Create HDFS directory if missing
+hdfsMkdir :: HadoopEnv -> String -> IO ExitCode
+hdfsMkdir HadoopEnv{..} fp = rawSystem hsBin ["fs", "-mkdir", "-p", fp]
 
 
 -------------------------------------------------------------------------------
@@ -262,7 +276,7 @@ hdfsCat HadoopEnv{..} p = do
 
 
 ------------------------------------------------------------------------------
--- | Generates a random filename in the /tmp/hadoop-streaming directory.
+-- | Generates a random filename in the /tmp/hadron directory.
 randomFilename :: IO FilePath
 randomFilename = do
     tk <- mkRNG >>= randomToken 64
@@ -270,7 +284,7 @@ randomFilename = do
 
 
 tmpRoot :: FilePath
-tmpRoot = "/tmp/hadoop-streaming/"
+tmpRoot = "/tmp/hadron/"
 
 
 -------------------------------------------------------------------------------

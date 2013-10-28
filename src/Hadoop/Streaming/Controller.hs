@@ -357,6 +357,11 @@ newMRKey = do
     return $! show i
 
 
+-------------------------------------------------------------------------------
+-- | Grab list of files in destination, write into a file, put file on
+-- HDFS so it is shared and return the local/HDFS path, they are the
+-- same, as output.
+setupBinaryDir :: HadoopEnv -> FilePath -> IO FilePath
 setupBinaryDir settings loc = do
     localFile <- randomFilename
     files <- hdfsLs settings loc
@@ -368,6 +373,7 @@ setupBinaryDir settings loc = do
         paths = map (prefix++) files
     createDirectoryIfMissing True $ dropFileName localFile
     writeFile localFile $ unlines paths
+    hdfsMkdir settings tmpRoot           -- in case it is missing
     hdfsPut settings localFile localFile
     return localFile
 
@@ -482,15 +488,9 @@ hadoopMain c@(Controller p) hs rr = logTo stdout $ do
 
       go _ (ConIO f) = liftIO f
 
-      go _ (MakeTap proto) = do
-          loc <- liftIO randomFilename
-          return $ Tap loc proto
-      --go _ MakeTap = return $ error "MakeTap should not be used during Map-Reduce operation. That's illegal."
+      go _ (MakeTap proto) = return $ Tap "---" proto
 
-      go _ (BinaryDirTap _) = liftIO $ do
-          listFile <- randomFilename
-          return $ fileListTap hs listFile
-      --go _ (BinaryDirTap _) = return $ error "BinaryDirTap should not be used during Map-Reduce operation. That's illegal."
+      go _ (BinaryDirTap _) = return $ fileListTap hs "---"
 
       go arg (Connect (MapReduce mro mrInPrism mp rd) inp outp) = do
           mrKey <- newMRKey
