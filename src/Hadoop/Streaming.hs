@@ -157,8 +157,8 @@ mapper f = do
     sourceHandle stdin =$=
       performEvery every inLog =$=
       f =$=
-      performEvery every outLog =$=
       C.map conv =$=
+      performEvery every outLog =$=
       builderToByteString $$
       sinkHandle stdout
     where
