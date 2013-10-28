@@ -306,6 +306,7 @@ hdfsGet :: HadoopEnv -> FilePath -> IO FilePath
 hdfsGet HadoopEnv{..} p = do
     tmpFile <- randomFilename
     createDirectoryIfMissing True tmpRoot
+    rawSystem hsBin ["chmod", "a+rw", tmpRoot]
     rawSystem hsBin ["fs", "-get", p, tmpFile]
     return tmpFile
 
