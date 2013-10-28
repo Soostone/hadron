@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns               #-}
 {-# LANGUAGE DeriveFunctor              #-}
 {-# LANGUAGE EmptyDataDecls             #-}
 {-# LANGUAGE ExistentialQuantification  #-}
@@ -243,7 +244,7 @@ tap = Tap
 readHdfsFile :: HadoopEnv -> Conduit B.ByteString IO B.ByteString
 readHdfsFile settings = awaitForever $ \s3Uri -> do
     let uriStr = B.unpack s3Uri
-    let getFile = hdfsLocalStream settings uriStr
+        getFile = hdfsLocalStream settings uriStr
     if isSuffixOf "gz" uriStr
       then getFile =$= ungzip
       else getFile
@@ -497,12 +498,12 @@ hadoopMain c@(Controller p) hs rr = logTo stdout $ do
                 protoDec inSer =$=
                 performEvery 1 logIn =$=
                 mp =$=
-                C.map (\ (k, v) -> (toCompKey k, v)))
+                C.map (\ (!k, !v) -> (toCompKey k, v)))
 
             Just (Reduce, _) -> do
               let outSer = proto outp
                   conv (k,v) = do
-                      k' <- fromCompKey k
+                      !k' <- fromCompKey k
                       return (k', v)
                   rd' = C.mapMaybe conv =$= rd =$= protoEnc outSer
               liftIO $ (reducerMain mro mrInPrism rd')
