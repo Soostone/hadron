@@ -208,10 +208,6 @@ data MapReduce a m b = forall k v. MRKey k => MapReduce {
     }
 
 
--- | The hadoop-understandable location of a datasource
-type Location = String
-
-
 -- | Tap is a data source/sink definition that *knows* how to serve
 -- records of type 'a'.
 --
@@ -224,7 +220,7 @@ type Location = String
 --
 -- > customers = 'tap' "s3n://my-bucket/customers" (csvProtocol def)
 data Tap m a = Tap
-    { location :: Location
+    { location :: FilePath
     , proto    :: Protocol' m a
     }
 
@@ -239,7 +235,7 @@ type Tap' a = Tap IO a
 
 
 -- | Construct a 'DataDef'
-tap :: Location -> Protocol' m a -> Tap m a
+tap :: FilePath -> Protocol' m a -> Tap m a
 tap = Tap
 
 
@@ -261,7 +257,7 @@ readHdfsFile settings = awaitForever $ \s3Uri -> do
 -- binary data.  Then the file names get split by hadoop and each map job
 -- reads from those files as its first step.
 fileListTap :: HadoopEnv
-            -> Location
+            -> FilePath
             -- ^ A file containing a list of files to be used as input
             -> Tap IO B.ByteString
 fileListTap settings loc = tap loc (Protocol enc dec)
@@ -289,7 +285,7 @@ data ConI a where
             -> ConI ()
 
     MakeTap :: Protocol' IO a -> ConI (Tap IO a)
-    BinaryDirTap :: Location -> ConI (Tap IO B.ByteString)
+    BinaryDirTap :: FilePath -> ConI (Tap IO B.ByteString)
 
     ConIO :: IO a -> ConI a
 
@@ -338,7 +334,7 @@ makeTap proto = Controller $ singleton $ MakeTap proto
 
 -------------------------------------------------------------------------------
 -- | Creates a tap for a directory of binary files.
-binaryDirTap :: Location -> Controller (Tap IO B.ByteString)
+binaryDirTap :: FilePath -> Controller (Tap IO B.ByteString)
 binaryDirTap loc = Controller $ singleton $ BinaryDirTap loc
 
 
@@ -546,18 +542,18 @@ joinStep fs = MapReduce joinOpts pSerialize mp rd
       salt = 0
       showBS = B.pack . show
 
-      names :: [(Location, DataSet)]
+      names :: [(FilePath, DataSet)]
       names = map (\ (i, loc) -> (loc, DataSet $ B.concat [showBS i, ":",  showBS $ hashWithSalt salt loc])) $
               zip [(0::Integer)..] locations
 
-      nameIx :: M.Map Location DataSet
+      nameIx :: M.Map FilePath DataSet
       nameIx = M.fromList names
 
       tapIx :: M.Map DataSet (Tap m a)
       tapIx = M.fromList $ zip (map snd names) (map (view _1) fs)
 
 
-      locations :: [Location]
+      locations :: [FilePath]
       locations = map (location . view _1) fs
 
 
