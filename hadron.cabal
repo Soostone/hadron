@@ -61,7 +61,7 @@ library
                        -fwarn-tabs
                        -fno-warn-unused-do-bind
   default-language:    Haskell2010
-  ghc-prof-options:    -fprof-auto -fprof-cafs
+  ghc-prof-options:    -fprof-auto -fprof-cafs -fprof-auto-calls
 
 
 

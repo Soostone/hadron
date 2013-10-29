@@ -155,11 +155,11 @@ mapper f = do
     liftIO $ hSetBuffering stderr LineBuffering
     liftIO $ hSetBuffering stdout LineBuffering
     liftIO $ hSetBuffering stdin LineBuffering
-    sourceHandle stdin =$=
-      performEvery every inLog =$=
-      f =$=
-      C.map conv =$=
-      performEvery every outLog =$=
+    sourceHandle stdin $=
+      performEvery every inLog $=
+      f $=
+      C.map conv $=
+      performEvery every outLog $=
       builderToByteString $$
       sinkHandle stdout
     where

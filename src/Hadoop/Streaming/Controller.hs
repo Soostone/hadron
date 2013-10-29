@@ -489,23 +489,24 @@ hadoopMain c@(Controller p) hs rr = logTo stdout $ do
 
       go arg (Connect (MapReduce mro mrInPrism mp rd) inp outp) = do
           mrKey <- newMRKey
+          let dec = protoDec . proto $ head inp
+              enc = protoEnc  $ proto outp
+              logIn _ = liftIO $ hsEmitCounter "Map rows decoded" 1
+
           case find ((== arg) . snd) $ mkArgs mrKey of
 
             Just (Map, _) -> do
-              let inSer = proto $ head inp
-                  logIn _ = liftIO $ hsEmitCounter "Map rows decoded" 1
               liftIO $ (mapperWith mrInPrism $
-                protoDec inSer =$=
+                dec =$=
                 performEvery 1 logIn =$=
                 mp =$=
                 C.map (\ (!k, !v) -> (toCompKey k, v)))
 
             Just (Reduce, _) -> do
-              let outSer = proto outp
-                  conv (k,v) = do
+              let conv (k,v) = do
                       !k' <- fromCompKey k
                       return (k', v)
-                  rd' = C.mapMaybe conv =$= rd =$= protoEnc outSer
+                  rd' = C.mapMaybe conv =$= rd =$= enc
               liftIO $ (reducerMain mro mrInPrism rd')
 
             Nothing -> return ()
