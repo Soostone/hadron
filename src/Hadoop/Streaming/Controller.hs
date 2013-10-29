@@ -92,7 +92,6 @@ import           Control.Monad.State
 import qualified Data.ByteString.Char8     as B
 import           Data.Conduit              as C
 import qualified Data.Conduit.List         as C
-import           Data.Conduit.Utils
 import           Data.Conduit.Zlib
 import           Data.Default
 import           Data.Hashable
@@ -498,7 +497,7 @@ hadoopMain c@(Controller p) hs rr = logTo stdout $ do
             Just (Map, _) -> do
               liftIO $ (mapperWith mrInPrism $
                 dec =$=
-                performEvery 1 logIn =$=
+                -- performEvery 1 logIn =$=
                 mp =$=
                 C.map (\ (!k, !v) -> (toCompKey k, v)))
 

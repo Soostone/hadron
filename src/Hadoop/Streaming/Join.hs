@@ -29,7 +29,6 @@ import           Control.Monad.Trans
 import qualified Data.ByteString.Char8 as B
 import           Data.Conduit
 import qualified Data.Conduit.List     as C
-import           Data.Conduit.Utils
 import           Data.Default
 import           Data.Hashable
 import qualified Data.HashMap.Strict   as HM
@@ -212,9 +211,9 @@ joinMapper
 joinMapper getDS mkMap = do
     fi <- getFileName
     let ds = getDS fi
-    performEvery every (inLog ds) =$=
-      mkMap ds =$=
-      performEvery every (outLog ds) =$=
+    -- performEvery every (inLog ds) =$=
+    mkMap ds =$=
+      -- performEvery every (outLog ds) =$=
       C.map (go ds)
   where
     inLog ds _ = liftIO $ hsEmitCounter

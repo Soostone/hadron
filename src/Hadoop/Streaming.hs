@@ -69,7 +69,6 @@ import           Data.Conduit
 import           Data.Conduit.Binary        (sinkHandle, sourceHandle)
 import           Data.Conduit.Blaze
 import qualified Data.Conduit.List          as C
-import           Data.Conduit.Utils
 import           Data.List
 import           Data.Monoid
 import           Options.Applicative        hiding (Parser)
@@ -156,10 +155,10 @@ mapper f = do
     liftIO $ hSetBuffering stdout LineBuffering
     liftIO $ hSetBuffering stdin LineBuffering
     sourceHandle stdin $=
-      performEvery every inLog $=
+      -- performEvery every inLog $=
       f $=
       C.map conv $=
-      performEvery every outLog $=
+      -- performEvery every outLog $=
       builderToByteString $$
       sinkHandle stdout
     where
@@ -254,11 +253,11 @@ reducer MROptions{..} mrInPrism f = do
 
       stream = sourceHandle stdin =$=
                lineC (numSegs mroPart) =$=
-               performEvery every logIn =$=
+               -- performEvery every logIn =$=
                C.mapMaybe (_2 (firstOf mrInPrism)) =$=
-               performEvery every logConv =$=
-               go2 =$=
-               performEvery every logOut
+               -- performEvery every logConv =$=
+               go2
+               -- performEvery every logOut
 
 
 

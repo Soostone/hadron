@@ -31,7 +31,6 @@ library
      bytestring,
      cereal,
      conduit >= 1.0,
-     conduit-utils,
      containers,
      csv-conduit >= 0.5.1,
      data-default,
