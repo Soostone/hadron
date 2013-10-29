@@ -193,13 +193,8 @@ reducerMain
     -> m ()
 reducerMain mro@MROptions{..} mrInPrism g =
     reducer mro mrInPrism g $=
-    -- C.map write $=
-    -- builderToByteString $=
     C.mapM_ emitOutput $$
     C.sinkNull
-  -- where
-    -- write x = fromByteString x `mappend` nl
-    -- nl = fromByteString "\n"
 
 
 
