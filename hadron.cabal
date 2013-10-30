@@ -53,7 +53,8 @@ library
      unordered-containers,
      vector,
      zlib-conduit,
-     directory
+     directory,
+     lcs
 
   ghc-options:         -Wall -O2 
                        -fwarn-tabs

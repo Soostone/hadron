@@ -50,14 +50,15 @@ module Hadoop.Streaming.Hadoop
 import           Control.Error
 import           Control.Monad.Logger
 import           Control.Monad.Trans
-import           Data.ByteString.Char8 (ByteString)
-import qualified Data.ByteString.Char8 as B
+import           Data.ByteString.Char8       (ByteString)
+import qualified Data.ByteString.Char8       as B
 import           Data.Conduit
-import           Data.Conduit.Binary   (sourceHandle)
+import           Data.Conduit.Binary         (sourceHandle)
 import           Data.Default
 import           Data.List
+import           Data.List.LCS.HuntSzymanski
 import           Data.RNG
-import qualified Data.Text             as T
+import qualified Data.Text                   as T
 import           System.Directory
 import           System.Environment
 import           System.Exit
@@ -234,12 +235,20 @@ hdfsLs :: HadoopEnv -> FilePath -> IO [FilePath]
 hdfsLs HadoopEnv{..} p = do
     (res,out,_) <- readProcessWithExitCode hsBin ["fs", "-ls", p] ""
     return $ case res of
-      ExitSuccess -> filter isOK $ map clean $ lines out
+      ExitSuccess -> parseLS p out
       ExitFailure{} -> []
+
+
+parseLS pat out = filter isOK $ map clean $ lines out
   where
-    prefix = takeWhile (/= '*') p
+    pat' = T.pack pat
+    prefix = takeWhile (/= '*') pat
     isOK x = isPrefixOf prefix x
-    clean xs = last (words xs)
+    clean x = T.unpack $ begin `T.append` T.pack path
+        where
+          path = last (words x)
+          shared = T.pack $ lcs pat path
+          (begin, _) = T.breakOn shared pat'
 
 
 -------------------------------------------------------------------------------
