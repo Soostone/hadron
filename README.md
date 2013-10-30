@@ -1,6 +1,7 @@
-# Hadron - Hadoop MapReduce in Haskell For Massive Win
+# Hadron - Hadoop MapReduce in Haskell
 
-If you're a Haskell fan, Hadron makes working with Hadoop a breeze.
+Hadron aims to bring Haskell's type-safety to construction of
+compley and delicate world of Hadoop Streaming MapReduce.
 
 ## Features
 
@@ -20,6 +21,19 @@ If you're a Haskell fan, Hadron makes working with Hadoop a breeze.
   each mapped to a common, monoidal type which then get `mconcat`ed
   during reduce by join key. We support both required (a-la inner) and
   optional (a-la outer) joins.
+  
+  
+## Shortcomings and Issues
+
+Hadoop seems to be terrible at constantly changing little details,
+program flags and behavior across major releases. While we try to make
+this package as sound as possible, you may be forced to do some
+debugging due to a difference in the way Hadoop works on the version
+you are running.
+
+This library has been most commonly tested on Amazon's EMR offering
+and Cloudera's local demo VM.
+
 
 ## Modules
 
