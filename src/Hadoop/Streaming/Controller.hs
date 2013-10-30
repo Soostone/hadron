@@ -557,7 +557,7 @@ joinStep
     => [(Tap m a, JoinType, Mapper a m k b)]
     -- ^ Dataset definitions and how to map each dataset.
     -> MapReduce a m b
-joinStep fs = MapReduce joinOpts pSerialize mp rd
+joinStep fs = MapReduce mro pSerialize mp rd
     where
       salt = 0
       showBS = B.pack . show
