@@ -199,7 +199,7 @@ launchMapReduce HadoopEnv{..} mrKey HadoopRunOpts{..} = do
                NoPartition -> []
                Partition{..} ->
                  [ "-D", "stream.num.map.output.key.fields=" ++ show keySegs
-                 , "-D", "mapred.text.key.partitioner.options=-k" ++ intercalate "," (map show [1..partSegs])
+                 , "-D", "mapred.text.key.partitioner.options=-k1," ++ show partSegs
                  , "-partitioner", "org.apache.hadoop.mapred.lib.KeyFieldBasedPartitioner"
                  ]
 
