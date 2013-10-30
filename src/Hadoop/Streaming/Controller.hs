@@ -43,6 +43,8 @@ module Hadoop.Streaming.Controller
     , MapReduce (..)
     , Mapper
     , Reducer
+    , (>.>)
+    , (<.<)
     , MRKey (..)
     , SingleKey (..)
     , Tap (..)
@@ -126,25 +128,31 @@ mrKeyError i n =
 class MRKey k where
     toCompKey :: k -> CompositeKey
     fromCompKey :: CompositeKey -> Maybe k
+    numKeys :: k -> Int
 
 instance MRKey B.ByteString where
     toCompKey k = [k]
     fromCompKey [k] = Just k
     fromCompKey xs  = mrKeyError 1 (length xs)
+    numKeys _ = 1
 
 instance MRKey CompositeKey where
     toCompKey ks = ks
     fromCompKey ks = Just ks
+    numKeys ks = length ks
 
 instance Serialize a => MRKey (SingleKey a) where
     toCompKey a = [review pSerialize a]
     fromCompKey [a] = preview pSerialize a
     fromCompKey xs  = mrKeyError 1 (length xs)
+    numKeys _ = 1
+
 
 instance (Serialize a, Serialize b) => MRKey (a,b) where
     toCompKey (a,b) = [review pSerialize a, review pSerialize b]
     fromCompKey [a,b] = (,) <$> preview pSerialize a <*> preview pSerialize b
     fromCompKey xs  = mrKeyError 2 (length xs)
+    numKeys _ = 2
 
 instance (Serialize a, Serialize b, Serialize c) => MRKey (a,b,c) where
     toCompKey (a,b,c) = [review pSerialize a, review pSerialize b, review pSerialize c]
@@ -153,6 +161,7 @@ instance (Serialize a, Serialize b, Serialize c) => MRKey (a,b,c) where
         <*> preview pSerialize b
         <*> preview pSerialize c
     fromCompKey xs  = mrKeyError 3 (length xs)
+    numKeys _ = 3
 
 instance (Serialize a, Serialize b, Serialize c, Serialize d) => MRKey (a,b,c,d) where
     toCompKey (a,b,c,d) = [review pSerialize a, review pSerialize b, review pSerialize c, review pSerialize d]
@@ -162,6 +171,7 @@ instance (Serialize a, Serialize b, Serialize c, Serialize d) => MRKey (a,b,c,d)
         <*> preview pSerialize c
         <*> preview pSerialize d
     fromCompKey xs  = mrKeyError 4 (length xs)
+    numKeys _ = 4
 
 instance (Serialize a, Serialize b, Serialize c, Serialize d, Serialize e) => MRKey (a,b,c,d,e) where
     toCompKey (a,b,c,d,e) =
@@ -174,6 +184,7 @@ instance (Serialize a, Serialize b, Serialize c, Serialize d, Serialize e) => MR
         <*> preview pSerialize d
         <*> preview pSerialize e
     fromCompKey xs  = mrKeyError 5 (length xs)
+    numKeys _ = 5
 
 instance (Serialize a, Serialize b, Serialize c, Serialize d, Serialize e, Serialize f) => MRKey (a,b,c,d,e,f) where
     toCompKey (a,b,c,d,e,f) =
@@ -187,10 +198,22 @@ instance (Serialize a, Serialize b, Serialize c, Serialize d, Serialize e, Seria
         <*> preview pSerialize e
         <*> preview pSerialize f
     fromCompKey xs  = mrKeyError 6 (length xs)
+    numKeys _ = 6
 
 
 
 
+
+-------------------------------------------------------------------------------
+-- | Do something with m-r output before writing it to a tap.
+(>.>) :: Monad m => MapReduce a m b -> Conduit b m c -> MapReduce a m c
+(MapReduce o p m r) >.> f = MapReduce o p m (r =$= f)
+
+
+-------------------------------------------------------------------------------
+-- | Dome something with the m-r input before starting the map stage.
+(<.<) :: Monad m => Conduit c m a -> MapReduce a m b -> MapReduce c m b
+f <.< (MapReduce o p m r) = MapReduce o p (f =$= m) r
 
 -------------------------------------------------------------------------------
 -- | A packaged MapReduce step. Make one of these for each distinct
@@ -527,15 +550,20 @@ data JoinDef m b = forall a. JoinDef {
 -- single data type. All you need to supply is the map operation for
 -- each tap, the reduce step is assumed to be the Monoidal 'mconcat'.
 joinStep
-    :: forall m b a. (MonadIO m, MonadThrow m,
-                      Show b, Monoid b, Serialize b)
-    => [(Tap m a, JoinType, Conduit a m (JoinKey, b))]
+    :: forall m k b a.
+       (MonadIO m, MonadThrow m,
+        Show b, Monoid b, Serialize b,
+        MRKey k)
+    => [(Tap m a, JoinType, Mapper a m k b)]
     -- ^ Dataset definitions and how to map each dataset.
     -> MapReduce a m b
 joinStep fs = MapReduce joinOpts pSerialize mp rd
     where
       salt = 0
       showBS = B.pack . show
+      n = numKeys (undefined :: k)
+
+      mro = joinOpts { mroPart = Partition (n+1) n }
 
       names :: [(FilePath, DataSet)]
       names = map (\ (i, loc) -> (loc, DataSet $ B.concat [showBS i, ":",  showBS $ hashWithSalt salt loc])) $
@@ -573,9 +601,11 @@ joinStep fs = MapReduce joinOpts pSerialize mp rd
       mkMap' ds = fromMaybe (error "Can't identify current tap in IX.") $ do
                       t <- M.lookup ds tapIx
                       cond <- find ((== t) . view _1) fs
-                      return $ view _3 cond
+                      let c = view _3 cond =$= C.map (over _1 toCompKey)
+                      return c
 
       mp = joinMapper getDS mkMap'
-      rd = joinReducer fs'
+
+      rd =  joinReducer fs'
 
 

@@ -115,8 +115,7 @@ emitStream _ _ = error "emitStream can't be called unless it's in Streaming mode
 joinOpts :: MROptions
 joinOpts = def { mroEq = eq, mroPart = (Partition 2 1) }
     where
-      eq [a1,_] [b1,_] = a1 == b1
-      eq _ _ = error "joinOpts equality received an unexpected pattern"
+      eq as bs = init as == init bs
 
 
 -------------------------------------------------------------------------------
@@ -192,7 +191,7 @@ joinReduceStep fs buf@Buffering{..} (k, x) =
                     }
 
       add new old = new ++ old
-      [_, ds] = k
+      ds = last k
       ds' = DataSet ds
 
 joinReduceStep _ str@Streaming{} (_,x) = emitStream str x >> return str
@@ -206,7 +205,7 @@ joinReduceStep _ str@Streaming{} (_,x) = emitStream str x >> return str
 joinMapper
     :: MonadIO m
     => (String -> DataSet)
-    -> (DataSet -> Conduit a m (JoinKey, r))
+    -> (DataSet -> Conduit a m (CompositeKey, r))
     -> Mapper a m CompositeKey r
 joinMapper getDS mkMap = do
     fi <- getFileName
@@ -221,7 +220,7 @@ joinMapper getDS mkMap = do
     outLog ds _ = liftIO $ hsEmitCounter
                   (B.concat ["Map emit dataset: ", getDataSet ds]) every
     every = 1
-    go ds (jk, a) = ([jk, getDataSet ds], a)
+    go ds (jk, a) = (jk ++ [getDataSet ds], a)
 
 
 
@@ -242,7 +241,7 @@ joinMain
     -- ^ Define your tables
     -> (String -> DataSet)
     -- ^ Infer dataset from input filename
-    -> (DataSet -> Conduit B.ByteString m (JoinKey, r))
+    -> (DataSet -> Conduit B.ByteString m (CompositeKey, r))
     -- ^ Map input stream to a join key and the common-denominator
     -- uniform data type we know how to 'mconcat'.
     -> Prism' B.ByteString r
