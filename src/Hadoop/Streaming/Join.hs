@@ -205,7 +205,9 @@ joinReduceStep _ str@Streaming{} (_,x) = emitStream str x >> return str
 joinMapper
     :: MonadIO m
     => (String -> DataSet)
+    -- ^ Infer dataset from current filename
     -> (DataSet -> Conduit a m (CompositeKey, r))
+    -- ^ Given a dataset, map it to a common data type
     -> Mapper a m CompositeKey r
 joinMapper getDS mkMap = do
     fi <- getFileName
