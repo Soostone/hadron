@@ -225,7 +225,7 @@ hdfsFileExists HadoopEnv{..} p = do
 -- | Check if the target file is present.
 hdfsDeletePath :: HadoopEnv -> FilePath -> IO ExitCode
 hdfsDeletePath HadoopEnv{..} p =
-    rawSystem hsBin ["fs", "-rm", "-r", "-skipTrash", p]
+    rawSystem hsBin ["fs", "-rmr", "-skipTrash", p]
 
 
 
