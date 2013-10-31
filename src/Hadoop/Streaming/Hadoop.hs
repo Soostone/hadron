@@ -147,6 +147,7 @@ snappyCodec = "org.apache.hadoop.io.compress.SnappyCodec"
 
 
 type MapReduceKey = String
+type RunToken = String
 
 
 -------------------------------------------------------------------------------
@@ -154,9 +155,10 @@ launchMapReduce
     :: (MonadIO m, MonadLogger m)
     => HadoopEnv
     -> MapReduceKey
+    -> RunToken
     -> HadoopRunOpts
     -> EitherT String m ()
-launchMapReduce HadoopEnv{..} mrKey HadoopRunOpts{..} = do
+launchMapReduce HadoopEnv{..} mrKey runToken HadoopRunOpts{..} = do
     exec <- scriptIO getExecutablePath
     prog <- scriptIO getProgName
     lift $ $(logInfo) $ T.concat ["Launching Hadoop job for MR key: ", T.pack mrKey]
@@ -177,8 +179,8 @@ launchMapReduce HadoopEnv{..} mrKey HadoopRunOpts{..} = do
             compress ++ numMap ++ numRed ++ part ++ outSep ++
             inputs ++
             [ "-output", mrsOutput
-            , "-mapper", "\"" ++ prog ++ " map_" ++ mrKey ++ "\""
-            , "-reducer", "\"" ++ prog ++ " reduce_" ++ mrKey ++ "\""
+            , "-mapper", "\"" ++ prog ++ " " ++ runToken ++ " map_" ++ mrKey ++ "\""
+            , "-reducer", "\"" ++ prog ++ " " ++ runToken ++ " reduce_" ++ mrKey ++ "\""
             , "-file", exec
             ]
 

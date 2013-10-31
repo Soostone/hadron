@@ -104,6 +104,7 @@ import           Data.List.LCS.HuntSzymanski
 import qualified Data.Map                    as M
 import           Data.Monoid
 import           Data.Ord
+import           Data.RNG
 import           Data.Serialize
 import qualified Data.Text                   as T
 import           System.Directory
@@ -294,10 +295,11 @@ fileListTap settings loc = tap loc (Protocol enc dec)
 
 data ContState = ContState {
       _csMRCount :: Int
+    , _csMRVars  :: M.Map String B.ByteString
     }
 
 instance Default ContState where
-    def = ContState 0
+    def = ContState 0 M.empty
 
 
 makeLenses ''ContState
@@ -309,12 +311,11 @@ data ConI a where
     Connect :: forall i o. MapReduce i IO o
             -> [Tap IO i] -> Tap IO o
             -> ConI ()
-
     MakeTap :: Protocol' IO a -> ConI (Tap IO a)
     BinaryDirTap :: FilePath -> (FilePath -> Bool) -> ConI (Tap IO B.ByteString)
-
     ConIO :: IO a -> ConI a
-
+    SetVal :: String -> B.ByteString -> ConI ()
+    GetVal :: String -> ConI (Maybe B.ByteString)
 
 
 -- | All MapReduce steps are integrated in the 'Controller' monad.
@@ -356,6 +357,20 @@ connect mr inp outp = Controller $ singleton $ Connect mr inp outp
 -------------------------------------------------------------------------------
 makeTap :: Protocol' IO a -> Controller (Tap IO a)
 makeTap proto = Controller $ singleton $ MakeTap proto
+
+
+-------------------------------------------------------------------------------
+-- | Set a persistent variable in Controller state. This variable will
+-- be set during main M-R job controller loop and communicated to all
+-- the map and reduce nodes and will be available there.
+setVal :: String -> B.ByteString -> Controller ()
+setVal k v = Controller $ singleton $ SetVal k v
+
+
+-------------------------------------------------------------------------------
+-- | Get varible from Controller state
+getVal :: String -> Controller (Maybe B.ByteString)
+getVal k = Controller $ singleton $ GetVal k
 
 
 -------------------------------------------------------------------------------
@@ -429,10 +444,15 @@ orchestrate (Controller p) settings rr s = evalStateT (runEitherT (go p)) s
           loc <- liftIO randomFilename
           return $ Tap loc proto
 
-      eval' (BinaryDirTap loc filt) = liftIO $ do
-          localFile <- setupBinaryDir settings loc filt
-
+      eval' (BinaryDirTap loc filt) = do
+          localFile <- liftIO $ setupBinaryDir settings loc filt
+          -- remember location of the file from the original loc string
+          csMRVars.at loc .= Just (B.pack localFile)
           return $ fileListTap settings localFile
+
+
+      eval' (SetVal k v) = csMRVars . at k .= Just v
+      eval' (GetVal k) = use (csMRVars . at k)
 
       eval' (Connect mr@(MapReduce mro mrInPrism _ _) inp outp) = go'
           where
@@ -453,8 +473,17 @@ orchestrate (Controller p) settings rr s = evalStateT (runEitherT (go p)) s
                         go''
             go'' = do
               mrKey <- newMRKey
+
+              -- serialize current state to HDFS, to be read by
+              -- individual mappers reducers of this step.
+              runToken <- liftIO $ (mkRNG >>= randomToken 64) <&> B.unpack
+              let fn = tmpRoot <> runToken
+              st <- use csMRVars
+              liftIO $ writeFile fn (show st)
+              liftIO $ hdfsPut settings fn fn
+
               let mrs = mrOptsToRunOpts mro
-              launchMapReduce settings mrKey
+              launchMapReduce settings mrKey runToken
                 mrs { mrsInput = map location inp
                     , mrsOutput = location outp }
 
@@ -501,8 +530,8 @@ hadoopMain c@(Controller p) hs rr = logTo stdout $ do
       [] -> do
         res <- orchestrate c hs rr def
         liftIO $ either print (const $ putStrLn "Success.") res
-      [arg] -> do
-        _ <- evalStateT (interpretWithMonad (go arg) p) def
+      [runToken, arg] -> do
+        _ <- evalStateT (interpretWithMonad (go runToken arg) p) def
         return ()
       _ -> error "Usage: No arguments for job control or a phase name."
     where
@@ -511,16 +540,34 @@ hadoopMain c@(Controller p) hs rr = logTo stdout $ do
                      , (Reduce, "reduce_" ++ mrKey) ]
 
 
-      go :: String -> ConI b -> StateT ContState (LoggingT m) b
+      go :: String -> String -> ConI b -> StateT ContState (LoggingT m) b
 
-      go _ (ConIO f) = liftIO f
+      go _ _ (ConIO f) = liftIO f
 
-      go _ (MakeTap proto) = return $ Tap "---" proto
+      go _ _ (MakeTap proto) = return $ Tap "---" proto
 
-      go _ (BinaryDirTap _ _) = return $ fileListTap hs "---"
+      go _ _ (BinaryDirTap loc _) = do
+          dynLoc <- use $ csMRVars.at loc
+          case dynLoc of
+            Nothing -> error $ "Dynamic location can't be determined for BinaryDirTap at: " <> loc
+            Just loc' -> return $ fileListTap hs $ B.unpack loc'
 
-      go arg (Connect (MapReduce mro mrInPrism mp rd) inp outp) = do
+      -- setting in map-reduce phase is a no-op... There's nobody to
+      -- communicate it to.
+      go _ _ (SetVal k v) = return ()
+      go _ _ (GetVal k) = use (csMRVars . at k)
+
+      go runToken arg (Connect (MapReduce mro mrInPrism mp rd) inp outp) = do
           mrKey <- newMRKey
+
+
+          -- load controller varibles back up
+          let fn = tmpRoot <> runToken
+          tmp <- liftIO $ hdfsGet hs fn
+          st <- liftIO $ readFile tmp <&> read
+          csMRVars %= M.union st
+
+
           let dec = protoDec . proto $ head inp
               enc = protoEnc  $ proto outp
 
@@ -540,18 +587,17 @@ hadoopMain c@(Controller p) hs rr = logTo stdout $ do
           case find ((== arg) . snd) $ mkArgs mrKey of
 
             Just (Map, _) -> liftIO $ do
-              fn <- getFileName
+              curFile <- getFileName
               catching exception mp'
                 (\ (e :: SomeException) ->
                      error $ "Exception raised during Map in stage " <> show mrKey <>
-                             " while processing file " <> fn <> ": " <> show e)
+                             " while processing file " <> curFile <> ": " <> show e)
 
             Just (Reduce, _) -> liftIO $ do
-              fn <- getFileName
               catching exception red
                 (\ (e :: SomeException) ->
-                     error $ "Exception raised during Reduce in stage " <> show mrKey <>
-                             " while processing file " <> fn <> ": " <> show e)
+                     error $ "Exception raised during Reduce in stage " <>
+                             show mrKey <> ": " <> show e)
 
             Nothing -> return ()
 
