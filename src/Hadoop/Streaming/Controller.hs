@@ -295,11 +295,17 @@ fileListTap settings loc = tap loc (Protocol enc dec)
 
 data ContState = ContState {
       _csMRCount :: Int
+    -- ^ MR run count; one for each 'connect'.
     , _csMRVars  :: M.Map String B.ByteString
+    -- ^ Arbitrary key-val store that's communicated to nodes.
+    , _csDynId   :: Int
+    -- ^ Keeps increasing count of dynamic taps in the order they are
+    -- created in the Controller monad. Needed so we can communicate
+    -- the tap locations to MR nodes.
     }
 
 instance Default ContState where
-    def = ContState 0 M.empty
+    def = ContState 0 M.empty 0
 
 
 makeLenses ''ContState
@@ -420,6 +426,13 @@ setupBinaryDir settings loc chk = do
     return localFile
 
 
+tapLens curId = csMRVars.at ("tap_" <> show curId)
+pickId = do
+    curId <- use csDynId
+    csDynId %= (+1)
+    return curId
+
+
 -------------------------------------------------------------------------------
 -- | Interpreter for the central job control process
 orchestrate
@@ -442,12 +455,20 @@ orchestrate (Controller p) settings rr s = evalStateT (runEitherT (go p)) s
 
       eval' (MakeTap proto) = do
           loc <- liftIO randomFilename
+
+          curId <- pickId
+          tapLens curId .= Just (B.pack loc)
+
           return $ Tap loc proto
 
       eval' (BinaryDirTap loc filt) = do
           localFile <- liftIO $ setupBinaryDir settings loc filt
-          -- remember location of the file from the original loc string
-          csMRVars.at loc .= Just (B.pack localFile)
+
+          -- remember location of the file from the original loc
+          -- string
+          curId <- pickId
+          tapLens curId .= Just (B.pack localFile)
+
           return $ fileListTap settings localFile
 
 
@@ -553,20 +574,29 @@ hadoopMain c@(Controller p) hs rr = logTo stdout $ do
 
       go _ _ (ConIO f) = liftIO f
 
-      go _ _ (MakeTap proto) = return $ Tap "---" proto
+      go _ _ (MakeTap proto) = do
+          curId <- pickId
+          dynLoc <- use $ tapLens curId
+          case dynLoc of
+            Nothing -> error $ "Dynamic location can't be determined for MakTap at index " <> show curId
+            Just loc' -> return $ Tap (B.unpack loc') proto
 
       go _ _ (BinaryDirTap loc _) = do
-          dynLoc <- use $ csMRVars.at loc
+
+          -- remember location of the file from the original loc
+          -- string
+          curId <- pickId
+          dynLoc <- use $ tapLens curId
           case dynLoc of
             Nothing -> error $ "Dynamic location can't be determined for BinaryDirTap at: " <> loc
             Just loc' -> return $ fileListTap hs $ B.unpack loc'
 
       -- setting in map-reduce phase is a no-op... There's nobody to
       -- communicate it to.
-      go _ _ (SetVal k v) = return ()
+      go _ _ (SetVal _ _) = return ()
       go _ _ (GetVal k) = use (csMRVars . at k)
 
-      go runToken arg (Connect (MapReduce mro mrInPrism mp rd) inp outp) = do
+      go _ arg (Connect (MapReduce mro mrInPrism mp rd) inp outp) = do
           mrKey <- newMRKey
 
           let dec = protoDec . proto $ head inp
@@ -628,7 +658,6 @@ joinStep
     -> MapReduce a m b
 joinStep fs = MapReduce mro pSerialize mp rd
     where
-      salt = 0
       showBS = B.pack . show
       n = numKeys (undefined :: k)
 
