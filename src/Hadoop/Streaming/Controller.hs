@@ -478,22 +478,26 @@ orchestrate (Controller p) settings rr s = evalStateT (runEitherT (go p)) s
       eval' (Connect mr@(MapReduce mro mrInPrism _ _) inp outp) = go'
           where
             go' = do
+                mrKey <- newMRKey
+
                 chk <- liftIO $ hdfsFileExists settings (location outp)
                 case chk of
-                  False -> go''
+                  False -> go'' mrKey
                   True ->
                     case rr of
                       RSFail -> lift $ $(logError) $ T.concat
                         ["Destination file exists: ", T.pack (location outp)]
-                      RSSkip -> go''
+                      RSSkip -> lift $ $(logInfo) $ T.concat
+                        ["Desitnation exists. Skipping ", T.pack (location outp)]
                       RSReRun -> do
                         lift $ $(logInfo) $ T.pack $
                           "Destination file exists, will delete and rerun: " ++
                           location outp
                         _ <- liftIO $ hdfsDeletePath settings (location outp)
-                        go''
-            go'' = do
-              mrKey <- newMRKey
+                        go'' mrKey
+
+
+            go'' mrKey = do
 
               -- serialize current state to HDFS, to be read by
               -- individual mappers reducers of this step.
