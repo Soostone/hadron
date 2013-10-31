@@ -99,7 +99,7 @@ import           Data.Conduit              as C
 import qualified Data.Conduit.List         as C
 import           Data.Conduit.Zlib
 import           Data.Default
-import           Data.Hashable
+
 import           Data.List
 import qualified Data.Map                  as M
 import           Data.Monoid
@@ -640,7 +640,8 @@ joinStep fs = MapReduce mro pSerialize mp rd
       locations' = map B.pack locations
 
       dataSets :: [(FilePath, DataSet)]
-      dataSets = map (\ loc -> (loc, DataSet (showBS $ hashWithSalt salt loc))) locations
+      dataSets = map (\ (loc, i) -> (loc, DataSet (showBS i))) $
+                 zip locations [0..]
 
       dsIx :: M.Map FilePath DataSet
       dsIx = M.fromList dataSets
