@@ -54,7 +54,8 @@ library
      vector,
      zlib-conduit,
      directory,
-     lcs
+     lcs,
+     stringsearch
 
   ghc-options:         -Wall -O2 
                        -fwarn-tabs

@@ -243,6 +243,10 @@ hdfsLs HadoopEnv{..} p = do
       ExitFailure{} -> []
 
 
+-------------------------------------------------------------------------------
+-- | TODO: The lcs function does not guarantee contiguous-common
+-- regions, so this function may behave strangely. We should figure
+-- out a way to use longest-common-prefix like semantics.
 parseLS pat out = filter isOK $ map clean $ lines out
   where
     pat' = T.pack pat

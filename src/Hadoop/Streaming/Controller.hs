@@ -90,23 +90,23 @@ import           Control.Error
 import           Control.Exception
 import           Control.Exception.Lens
 import           Control.Lens
-import           Control.Monad.Operational   hiding (view)
-import qualified Control.Monad.Operational   as O
+import           Control.Monad.Operational hiding (view)
+import qualified Control.Monad.Operational as O
 import           Control.Monad.State
-import qualified Data.ByteString.Char8       as B
-import           Data.Conduit                as C
-import qualified Data.Conduit.List           as C
+import qualified Data.ByteString.Char8     as B
+import           Data.ByteString.Search    as B
+import           Data.Conduit              as C
+import qualified Data.Conduit.List         as C
 import           Data.Conduit.Zlib
 import           Data.Default
 import           Data.Hashable
 import           Data.List
-import           Data.List.LCS.HuntSzymanski
-import qualified Data.Map                    as M
+import qualified Data.Map                  as M
 import           Data.Monoid
 import           Data.Ord
 import           Data.RNG
 import           Data.Serialize
-import qualified Data.Text                   as T
+import qualified Data.Text                 as T
 import           System.Directory
 import           System.Environment
 import           System.FilePath
@@ -637,6 +637,8 @@ joinStep fs = MapReduce mro pSerialize mp rd
       locations :: [FilePath]
       locations = map (location . view _1) fs
 
+      locations' = map B.pack locations
+
       dataSets :: [(FilePath, DataSet)]
       dataSets = map (\ loc -> (loc, DataSet (showBS $ hashWithSalt salt loc))) locations
 
@@ -658,10 +660,10 @@ joinStep fs = MapReduce mro pSerialize mp rd
 
       -- | get dataset name from a given input filename
       getDS nm = fromMaybe (error "Can't identify current tap from filename.") $ do
-
+        let nm' = B.pack nm
         curLoc <- fmap fst . lastMay . sortBy (comparing snd) .
                   zip locations $
-                  map (length . lcs nm) locations
+                  map (length . flip B.indices nm') locations'
 
         M.lookup curLoc dsIx
 
