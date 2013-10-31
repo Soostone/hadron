@@ -531,13 +531,22 @@ hadoopMain c@(Controller p) hs rr = logTo stdout $ do
         res <- orchestrate c hs rr def
         liftIO $ either print (const $ putStrLn "Success.") res
       [runToken, arg] -> do
-        _ <- evalStateT (interpretWithMonad (go runToken arg) p) def
+        _ <- evalStateT (loadState runToken >> interpretWithMonad (go runToken arg) p) def
         return ()
       _ -> error "Usage: No arguments for job control or a phase name."
     where
 
       mkArgs mrKey = [ (Map, "map_" ++ mrKey)
                      , (Reduce, "reduce_" ++ mrKey) ]
+
+
+      -- load controller varibles back up
+      loadState runToken = do
+          let fn = tmpRoot <> runToken
+          tmp <- liftIO $ hdfsGet hs fn
+          st <- liftIO $ readFile tmp <&> read
+          csMRVars %= M.union st
+          liftIO $ removeFile tmp
 
 
       go :: String -> String -> ConI b -> StateT ContState (LoggingT m) b
@@ -559,14 +568,6 @@ hadoopMain c@(Controller p) hs rr = logTo stdout $ do
 
       go runToken arg (Connect (MapReduce mro mrInPrism mp rd) inp outp) = do
           mrKey <- newMRKey
-
-
-          -- load controller varibles back up
-          let fn = tmpRoot <> runToken
-          tmp <- liftIO $ hdfsGet hs fn
-          st <- liftIO $ readFile tmp <&> read
-          csMRVars %= M.union st
-
 
           let dec = protoDec . proto $ head inp
               enc = protoEnc  $ proto outp
