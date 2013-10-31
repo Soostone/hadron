@@ -48,6 +48,7 @@ module Hadoop.Streaming.Hadoop
 
 -------------------------------------------------------------------------------
 import           Control.Error
+import           Control.Exception.Lens
 import           Control.Monad.Logger
 import           Control.Monad.Trans
 import           Data.ByteString.Char8       (ByteString)
@@ -57,6 +58,7 @@ import           Data.Conduit.Binary         (sourceHandle)
 import           Data.Default
 import           Data.List
 import           Data.List.LCS.HuntSzymanski
+import           Data.Monoid
 import           Data.RNG
 import qualified Data.Text                   as T
 import           System.Directory
@@ -233,7 +235,7 @@ hdfsDeletePath HadoopEnv{..} p =
 -- | Check if the target file is present.
 hdfsLs :: HadoopEnv -> FilePath -> IO [FilePath]
 hdfsLs HadoopEnv{..} p = do
-    (res,out,_) <- readProcessWithExitCode hsBin ["fs", "-ls", p] ""
+    (res,out,_) <- readProcessWithExitCode hsBin ["fs", "-lsr", p] ""
     return $ case res of
       ExitSuccess -> parseLS p out
       ExitFailure{} -> []
@@ -315,8 +317,10 @@ hdfsGet HadoopEnv{..} p = do
     tmpFile <- randomFilename
     createDirectoryIfMissing True tmpRoot
     -- rawSystem hsBin ["chmod", "a+rw", tmpRoot]
-    rawSystem hsBin ["fs", "-get", p, tmpFile]
-    return tmpFile
+    (res,out,err) <- readProcessWithExitCode hsBin ["fs", "-get", p, tmpFile]  ""
+    case res of
+      ExitFailure i -> error $ "hdfsGet failed: " <> show i <> ".\n" <> out <> "\n" <> err
+      ExitSuccess -> return tmpFile
 
 
 -------------------------------------------------------------------------------
@@ -324,7 +328,9 @@ hdfsGet HadoopEnv{..} p = do
 hdfsLocalStream :: MonadIO m => HadoopEnv -> FilePath -> Producer m ByteString
 hdfsLocalStream set fp = do
     random <- liftIO $ hdfsGet set fp
-    h <- liftIO $ openFile random ReadMode
+    h <- liftIO $ catching _IOException
+           (openFile random ReadMode)
+           (\e ->  error $ "hdfsLocalStream failed with open file: " <> show e)
     sourceHandle h
     liftIO $ hClose h
     liftIO $ removeFile random

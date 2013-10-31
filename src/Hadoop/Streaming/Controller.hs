@@ -88,20 +88,22 @@ module Hadoop.Streaming.Controller
 import           Control.Applicative
 import           Control.Error
 import           Control.Lens
-import           Control.Monad.Operational hiding (view)
-import qualified Control.Monad.Operational as O
+import           Control.Monad.Operational   hiding (view)
+import qualified Control.Monad.Operational   as O
 import           Control.Monad.State
-import qualified Data.ByteString.Char8     as B
-import           Data.Conduit              as C
-import qualified Data.Conduit.List         as C
+import qualified Data.ByteString.Char8       as B
+import           Data.Conduit                as C
+import qualified Data.Conduit.List           as C
 import           Data.Conduit.Zlib
 import           Data.Default
 import           Data.Hashable
 import           Data.List
-import qualified Data.Map                  as M
+import           Data.List.LCS.HuntSzymanski
+import qualified Data.Map                    as M
 import           Data.Monoid
+import           Data.Ord
 import           Data.Serialize
-import qualified Data.Text                 as T
+import qualified Data.Text                   as T
 import           System.Directory
 import           System.Environment
 import           System.FilePath
@@ -307,7 +309,7 @@ data ConI a where
             -> ConI ()
 
     MakeTap :: Protocol' IO a -> ConI (Tap IO a)
-    BinaryDirTap :: FilePath -> ConI (Tap IO B.ByteString)
+    BinaryDirTap :: FilePath -> (FilePath -> Bool) -> ConI (Tap IO B.ByteString)
 
     ConIO :: IO a -> ConI a
 
@@ -356,8 +358,13 @@ makeTap proto = Controller $ singleton $ MakeTap proto
 
 -------------------------------------------------------------------------------
 -- | Creates a tap for a directory of binary files.
-binaryDirTap :: FilePath -> Controller (Tap IO B.ByteString)
-binaryDirTap loc = Controller $ singleton $ BinaryDirTap loc
+binaryDirTap
+    :: FilePath
+    -- ^ A root location to list files under
+    -> (FilePath -> Bool)
+    -- ^ A filter condition to refine the listing
+    -> Controller (Tap IO B.ByteString)
+binaryDirTap loc filt = Controller $ singleton $ BinaryDirTap loc filt
 
 
 -- | LIft IO into 'Controller'. Note that this is a NOOP for when the
@@ -383,14 +390,15 @@ newMRKey = do
 -- | Grab list of files in destination, write into a file, put file on
 -- HDFS so it is shared and return the local/HDFS path, they are the
 -- same, as output.
-setupBinaryDir :: HadoopEnv -> FilePath -> IO FilePath
-setupBinaryDir settings loc = do
+setupBinaryDir :: HadoopEnv -> FilePath -> (FilePath -> Bool) -> IO FilePath
+setupBinaryDir settings loc chk = do
     localFile <- randomFilename
     let root = dropFileName localFile
     createDirectoryIfMissing True root
     hdfsMkdir settings root
     files <- hdfsLs settings loc
-    writeFile localFile $ unlines files
+    let files' = filter chk files
+    writeFile localFile $ unlines files'
     hdfsPut settings localFile localFile
     return localFile
 
@@ -419,8 +427,8 @@ orchestrate (Controller p) settings rr s = evalStateT (runEitherT (go p)) s
           loc <- liftIO randomFilename
           return $ Tap loc proto
 
-      eval' (BinaryDirTap loc) = liftIO $ do
-          localFile <- setupBinaryDir settings loc
+      eval' (BinaryDirTap loc filt) = liftIO $ do
+          localFile <- setupBinaryDir settings loc filt
 
           return $ fileListTap settings localFile
 
@@ -507,7 +515,7 @@ hadoopMain c@(Controller p) hs rr = logTo stdout $ do
 
       go _ (MakeTap proto) = return $ Tap "---" proto
 
-      go _ (BinaryDirTap _) = return $ fileListTap hs "---"
+      go _ (BinaryDirTap _ _) = return $ fileListTap hs "---"
 
       go arg (Connect (MapReduce mro mrInPrism mp rd) inp outp) = do
           mrKey <- newMRKey
@@ -565,25 +573,22 @@ joinStep fs = MapReduce mro pSerialize mp rd
 
       mro = joinOpts { mroPart = Partition (n+1) n }
 
-      names :: [(FilePath, DataSet)]
-      names = map (\ (i, loc) -> (loc, DataSet $ B.concat [showBS i, ":",  showBS $ hashWithSalt salt loc])) $
-              zip [(0::Integer)..] locations
-
-      nameIx :: M.Map FilePath DataSet
-      nameIx = M.fromList names
-
-      tapIx :: M.Map DataSet (Tap m a)
-      tapIx = M.fromList $ zip (map snd names) (map (view _1) fs)
-
-
       locations :: [FilePath]
       locations = map (location . view _1) fs
 
+      dataSets :: [(FilePath, DataSet)]
+      dataSets = map (\ loc -> (loc, DataSet (showBS $ hashWithSalt salt loc))) locations
+
+      dsIx :: M.Map FilePath DataSet
+      dsIx = M.fromList dataSets
+
+      tapIx :: M.Map DataSet (Tap m a)
+      tapIx = M.fromList $ zip (map snd dataSets) (map (view _1) fs)
 
       getTapDS :: Tap m a -> DataSet
       getTapDS t =
           fromMaybe (error "Can't identify dataset name for given location") $
-          M.lookup (location t) nameIx
+          M.lookup (location t) dsIx
 
 
       fs' :: [(DataSet, JoinType)]
@@ -592,17 +597,19 @@ joinStep fs = MapReduce mro pSerialize mp rd
 
       -- | get dataset name from a given input filename
       getDS nm = fromMaybe (error "Can't identify current tap from filename.") $ do
-        loc <- find (flip isInfixOf nm) locations
-        name <- M.lookup loc nameIx
-        return name
+
+        curLoc <- fmap fst . lastMay . sortBy (comparing snd) .
+                  zip locations . map (length . lcs nm) $
+                  locations
+
+        M.lookup curLoc dsIx
 
 
       -- | get the conduit for given dataset name
       mkMap' ds = fromMaybe (error "Can't identify current tap in IX.") $ do
                       t <- M.lookup ds tapIx
                       cond <- find ((== t) . view _1) fs
-                      let c = view _3 cond =$= C.map (over _1 toCompKey)
-                      return c
+                      return $ view _3 cond =$= C.map (over _1 toCompKey)
 
       mp = joinMapper getDS mkMap'
 
