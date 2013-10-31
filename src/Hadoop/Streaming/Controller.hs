@@ -103,7 +103,7 @@ import           Data.Hashable
 import           Data.List
 import qualified Data.Map                  as M
 import           Data.Monoid
-import           Data.Ord
+
 import           Data.RNG
 import           Data.Serialize
 import qualified Data.Text                 as T
@@ -661,11 +661,8 @@ joinStep fs = MapReduce mro pSerialize mp rd
       -- | get dataset name from a given input filename
       getDS nm = fromMaybe (error "Can't identify current tap from filename.") $ do
         let nm' = B.pack nm
-        curLoc <- fmap fst . lastMay . sortBy (comparing snd) .
-                  zip locations $
-                  map (length . flip B.indices nm') locations'
-
-        M.lookup curLoc dsIx
+        curLoc <- find (\l -> length (B.indices l nm') > 0) locations'
+        M.lookup (B.unpack curLoc) dsIx
 
 
       -- | get the conduit for given dataset name
