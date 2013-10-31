@@ -87,6 +87,8 @@ module Hadoop.Streaming.Controller
 -------------------------------------------------------------------------------
 import           Control.Applicative
 import           Control.Error
+import           Control.Exception
+import           Control.Exception.Lens
 import           Control.Lens
 import           Control.Monad.Operational   hiding (view)
 import qualified Control.Monad.Operational   as O
@@ -521,23 +523,35 @@ hadoopMain c@(Controller p) hs rr = logTo stdout $ do
           mrKey <- newMRKey
           let dec = protoDec . proto $ head inp
               enc = protoEnc  $ proto outp
-              logIn _ = liftIO $ hsEmitCounter "Map rows decoded" 1
+
+          let mp' = (mapperWith mrInPrism $
+                     dec =$=
+                     mp =$=
+                     C.map (\ (!k, !v) -> (toCompKey k, v)))
+
+          let red = do
+                  let conv (k,v) = do
+                          !k' <- fromCompKey k
+                          return (k', v)
+                      rd' = C.mapMaybe conv =$= rd =$= enc
+                  liftIO $ (reducerMain mro mrInPrism rd')
+
 
           case find ((== arg) . snd) $ mkArgs mrKey of
 
-            Just (Map, _) -> do
-              liftIO $ (mapperWith mrInPrism $
-                dec =$=
-                -- performEvery 1 logIn =$=
-                mp =$=
-                C.map (\ (!k, !v) -> (toCompKey k, v)))
+            Just (Map, _) -> liftIO $ do
+              fn <- getFileName
+              catching exception mp'
+                (\ (e :: SomeException) ->
+                     error $ "Exception raised during Map in stage " <> show mrKey <>
+                             " while processing file " <> fn <> ": " <> show e)
 
-            Just (Reduce, _) -> do
-              let conv (k,v) = do
-                      !k' <- fromCompKey k
-                      return (k', v)
-                  rd' = C.mapMaybe conv =$= rd =$= enc
-              liftIO $ (reducerMain mro mrInPrism rd')
+            Just (Reduce, _) -> liftIO $ do
+              fn <- getFileName
+              catching exception red
+                (\ (e :: SomeException) ->
+                     error $ "Exception raised during Reduce in stage " <> show mrKey <>
+                             " while processing file " <> fn <> ": " <> show e)
 
             Nothing -> return ()
 
@@ -599,8 +613,8 @@ joinStep fs = MapReduce mro pSerialize mp rd
       getDS nm = fromMaybe (error "Can't identify current tap from filename.") $ do
 
         curLoc <- fmap fst . lastMay . sortBy (comparing snd) .
-                  zip locations . map (length . lcs nm) $
-                  locations
+                  zip locations $
+                  map (length . lcs nm) locations
 
         M.lookup curLoc dsIx
 
