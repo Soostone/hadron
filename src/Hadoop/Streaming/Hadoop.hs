@@ -43,18 +43,22 @@ module Hadoop.Streaming.Hadoop
     , hdfsCat
     , hdfsGet
     , hdfsLocalStream
+    , hdfsLocalStreamMulti
     , hdfsChmod
     ) where
 
 -------------------------------------------------------------------------------
 import           Control.Error
 import           Control.Exception.Lens
+import           Control.Lens
+import           Control.Monad
 import           Control.Monad.Logger
 import           Control.Monad.Trans
 import           Data.ByteString.Char8       (ByteString)
 import qualified Data.ByteString.Char8       as B
 import           Data.Conduit
 import           Data.Conduit.Binary         (sourceHandle)
+import           Data.Conduit.Zlib
 import           Data.Default
 import           Data.List
 import           Data.List.LCS.HuntSzymanski
@@ -332,8 +336,8 @@ hdfsGet HadoopEnv{..} p = do
 -------------------------------------------------------------------------------
 -- | Copy a file down to local FS, then stream its content.
 hdfsLocalStream :: MonadIO m => HadoopEnv -> FilePath -> Producer m ByteString
-hdfsLocalStream set fp = do
-    random <- liftIO $ hdfsGet set fp
+hdfsLocalStream hs fp = do
+    random <- liftIO $ hdfsGet hs fp
     h <- liftIO $ catching _IOException
            (openFile random ReadMode)
            (\e ->  error $ "hdfsLocalStream failed with open file: " <> show e)
@@ -341,5 +345,23 @@ hdfsLocalStream set fp = do
     liftIO $ hClose h
     liftIO $ removeFile random
 
+
+-------------------------------------------------------------------------------
+-- | Stream contents of a folder one by one from HDFS.
+hdfsLocalStreamMulti
+    :: (MonadIO m, MonadUnsafeIO m, MonadThrow m)
+    => HadoopEnv
+    -> FilePath
+    -- ^ Location / glob pattern
+    -> (FilePath -> Bool)
+    -- ^ Fire filter based on name
+    -> Source m ByteString
+hdfsLocalStreamMulti hs loc chk = do
+    fs <- liftIO $ hdfsLs hs loc <&> filter chk
+    forM_ fs $ \ fp -> do
+        let getFile = hdfsLocalStream hs fp
+        if isSuffixOf "gz" fp
+        then getFile =$= ungzip
+        else getFile
 
 
