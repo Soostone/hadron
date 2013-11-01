@@ -45,8 +45,12 @@ module Hadoop.Streaming.Controller
     , Reducer
     , (>.>)
     , (<.<)
+
     , MRKey (..)
+    , CompositeKey
     , SingleKey (..)
+
+    -- * Data Sources
     , Tap (..)
     , Tap'
     , tap
@@ -71,16 +75,28 @@ module Hadoop.Streaming.Controller
     , mroOutSep
     , gzipCodec
     , snappyCodec
-
+    , PartitionStrategy (..)
     , RerunStrategy (..)
+
+    -- * Hadoop Utilities
+    , emitCounter
+    , hsEmitCounter
+    , emitStatus
+    , getFileName
+
 
     -- * Logging Related
     , logTo
 
-    -- * Joining Multiple Datasets
+
+    -- * MapReduce Combinators
+
     , joinStep
     , JoinType (..)
     , JoinKey
+
+    -- * Data Serialization Utilities
+    , module Hadoop.Streaming.Protocol
 
     ) where
 
@@ -116,6 +132,7 @@ import           Hadoop.Streaming
 import           Hadoop.Streaming.Hadoop
 import           Hadoop.Streaming.Join
 import           Hadoop.Streaming.Logger
+import           Hadoop.Streaming.Protocol
 import           Hadoop.Streaming.Types
 -------------------------------------------------------------------------------
 
@@ -649,9 +666,10 @@ data JoinDef m b = forall a. JoinDef {
 
 
 -------------------------------------------------------------------------------
--- | A convenient way to express multi-way join operations into a
--- single data type. All you need to supply is the map operation for
--- each tap, the reduce step is assumed to be the Monoidal 'mconcat'.
+-- | A convenient way to express map-sde multi-way join operations
+-- into a single data type. All you need to supply is the map
+-- operation for each tap, the reduce step is assumed to be the
+-- Monoidal 'mconcat'.
 joinStep
     :: forall m k b a.
        (MonadIO m, MonadThrow m,
