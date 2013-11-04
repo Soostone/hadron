@@ -115,14 +115,13 @@ import           Data.Conduit              as C
 import qualified Data.Conduit.List         as C
 import           Data.Conduit.Zlib
 import           Data.Default
-
 import           Data.List
 import qualified Data.Map                  as M
 import           Data.Monoid
-
 import           Data.RNG
 import           Data.Serialize
 import qualified Data.Text                 as T
+import           Data.Text.Encoding
 import           System.Directory
 import           System.Environment
 import           System.FilePath
@@ -162,6 +161,18 @@ instance MRKey CompositeKey where
     toCompKey ks = ks
     fromCompKey ks = Just ks
     numKeys ks = length ks
+
+instance MRKey String where
+    toCompKey = toCompKey . B.pack
+    fromCompKey = fmap B.unpack . fromCompKey
+    numKeys _ = 1
+
+
+instance MRKey T.Text where
+    toCompKey = toCompKey . encodeUtf8
+    fromCompKey = fmap decodeUtf8 . fromCompKey
+    numKeys _ = 1
+
 
 instance Serialize a => MRKey (SingleKey a) where
     toCompKey a = [review pSerialize a]

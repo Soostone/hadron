@@ -5,3 +5,5 @@ TAGS
 *DS*
 *.csv*
 *.swp
+.cabal-sandbox
+cabal.sandbox.config
