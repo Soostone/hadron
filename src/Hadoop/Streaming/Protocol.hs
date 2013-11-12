@@ -61,7 +61,7 @@ import           Hadoop.Streaming.Types
 
 
 -- | Like 'Protocol' but fixes the source format as 'ByteString'.
-type Protocol' m a = Protocol m B.ByteString a
+type Protocol' a = Protocol B.ByteString a
 
 
 -- | A 'Protocol's is a serialization strategy when we're dealing with
@@ -69,13 +69,13 @@ type Protocol' m a = Protocol m B.ByteString a
 -- and other potential obstructions.
 --
 -- Most of the time we'll be using 'Protocol\''s.
-data Protocol m b a = Protocol {
-      protoEnc :: Conduit a m b
-    , protoDec :: Conduit b m a
+data Protocol b a = Protocol {
+      protoEnc :: Conduit a IO b
+    , protoDec :: Conduit b IO a
     }
 
 
-instance Monad m => Category (Protocol m) where
+instance Category Protocol where
     id = Protocol (C.map id) (C.map id)
     p1 . p2 = Protocol { protoEnc = protoEnc p1 =$= protoEnc p2
                        , protoDec = protoDec p2 =$= protoDec p1 }
@@ -88,10 +88,7 @@ instance Monad m => Category (Protocol m) where
 -- It is assumed that the prism you supply to this function does not
 -- add newlines itself. You need to make them newline-free for this to
 -- work properly.
-prismToProtocol
-    :: (MonadUnsafeIO m, MonadThrow m)
-    => Prism' B.ByteString a
-    -> Protocol' m a
+prismToProtocol :: Prism' B.ByteString a -> Protocol' a
 prismToProtocol p =
     Protocol { protoEnc = C.map (review p) =$= write
              , protoDec = linesConduit =$= C.mapMaybe (preview p) }
@@ -104,12 +101,12 @@ prismToProtocol p =
 -------------------------------------------------------------------------------
 -- | Basically 'id' from Control.Category. Just pass the incoming
 -- ByteString through.
-idProtocol :: Monad m => Protocol' m B.ByteString
+idProtocol :: Protocol' B.ByteString
 idProtocol = id
 
 
 -- | A simple serialization strategy that works on lines of strings.
-linesProtocol :: MonadThrow m => Protocol' m B.ByteString
+linesProtocol :: Protocol' B.ByteString
 linesProtocol = Protocol { protoEnc = C.map (\x -> B.concat [x, "\n"])
                          , protoDec = linesConduit }
 
@@ -117,23 +114,19 @@ linesProtocol = Protocol { protoEnc = C.map (\x -> B.concat [x, "\n"])
 -------------------------------------------------------------------------------
 -- | Channel the 'Serialize' instance through 'Base64' encoding to
 -- make it newline-safe, then turn into newline-separated stream.
-base64SerProtocol
-    :: (MonadUnsafeIO m, MonadThrow m, Ser.Serialize a)
-    => Protocol' m a
+base64SerProtocol :: Ser.Serialize a => Protocol' a
 base64SerProtocol = prismToProtocol pSerialize
 
 
 -------------------------------------------------------------------------------
 -- | Encode and decode a gzip stream
-gzipProtocol :: (MonadUnsafeIO m, MonadThrow m)
-             => Protocol m B.ByteString B.ByteString
+gzipProtocol :: Protocol B.ByteString B.ByteString
 gzipProtocol = Protocol gzip ungzip
 
 
 -------------------------------------------------------------------------------
 -- | Protocol for converting to/from any stream type 'b' and CSV type 'a'.
-csvProtocol :: (MonadUnsafeIO m, MonadThrow m, CSV b a)
-            => CSVSettings -> Protocol m b a
+csvProtocol :: (CSV b a) => CSVSettings -> Protocol b a
 csvProtocol cset = Protocol (fromCSV cset) (intoCSV cset)
 
 
@@ -144,8 +137,7 @@ csvProtocol cset = Protocol (fromCSV cset) (intoCSV cset)
 --
 -- This is meant for debugging more than anything. Do not use it in
 -- serious matters. Use 'serProtocol' instead.
-showProtocol :: (MonadUnsafeIO m, MonadThrow m, Read a, Show a)
-             => Protocol' m a
+showProtocol :: (Read a, Show a) => Protocol' a
 showProtocol = prismToProtocol pShow
 
 

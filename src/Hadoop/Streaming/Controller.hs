@@ -53,7 +53,6 @@ module Hadoop.Streaming.Controller
 
     -- * Data Sources
     , Tap (..)
-    , Tap'
     , tap
     , binaryDirTap
     , setupBinaryDir
@@ -281,25 +280,29 @@ makeLenses ''MapReduce
 -- your MapReduce program is going to need:
 --
 -- > customers = 'tap' "s3n://my-bucket/customers" (csvProtocol def)
-data Tap m a = Tap
+data Tap a = Tap
     { location :: FilePath
-    , proto    :: Protocol' m a
+    , proto    :: Protocol' a
     }
 
 
 -- | If two 'location's are the same, we consider two Taps equal.
-instance Eq (Tap m a) where
+instance Eq (Tap a) where
     a == b = location a == location b
 
 
--- | It is often just fine to use IO as the base monad for MapReduce ops.
-type Tap' a = Tap IO a
-
-
 -- | Construct a 'DataDef'
-tap :: FilePath -> Protocol' m a -> Tap m a
-tap = Tap
+tap :: FilePath -> Protocol' a -> Tap a
+tap fp p = Tap fp p
 
+
+-------------------------------------------------------------------------------
+-- | TODO: This can't be defined yet because taps can have only a
+-- single location. Get taps to accept a list of locations...
+eitherTap
+    :: Either (FilePath, Protocol' a) (FilePath, Protocol' b)
+    -> Tap (Either a b)
+eitherTap = undefined
 
 ------------------------------------------------------------------------------
 -- | Conduit that takes in hdfs filenames and outputs the file contents.
@@ -321,7 +324,7 @@ readHdfsFile settings = awaitForever $ \s3Uri -> do
 fileListTap :: HadoopEnv
             -> FilePath
             -- ^ A file containing a list of files to be used as input
-            -> Tap IO B.ByteString
+            -> Tap B.ByteString
 fileListTap settings loc = tap loc (Protocol enc dec)
   where
     enc = error "You should never use a fileListTap as output!"
@@ -350,10 +353,10 @@ makeLenses ''ContState
 -------------------------------------------------------------------------------
 data ConI a where
     Connect :: forall i o. MapReduce i IO o
-            -> [Tap IO i] -> Tap IO o
+            -> [Tap i] -> Tap o
             -> ConI ()
-    MakeTap :: Protocol' IO a -> ConI (Tap IO a)
-    BinaryDirTap :: FilePath -> (FilePath -> Bool) -> ConI (Tap IO B.ByteString)
+    MakeTap :: Protocol' a -> ConI (Tap a)
+    BinaryDirTap :: FilePath -> (FilePath -> Bool) -> ConI (Tap B.ByteString)
     ConIO :: IO a -> ConI a
     SetVal :: String -> B.ByteString -> ConI ()
     GetVal :: String -> ConI (Maybe B.ByteString)
@@ -377,11 +380,11 @@ newtype Controller a = Controller { unController :: Program ConI a }
 connect'
     :: MapReduce a IO b
     -- ^ MapReduce step to run
-    -> [Tap IO a]
+    -> [Tap a]
     -- ^ Input files
-    -> Protocol' IO b
+    -> Protocol' b
     -- ^ Serialization protocol to be used on the output
-    -> Controller (Tap IO b)
+    -> Controller (Tap b)
 connect' mr inp proto = do
     out <- makeTap proto
     connect mr inp out
@@ -391,12 +394,12 @@ connect' mr inp proto = do
 -------------------------------------------------------------------------------
 -- | Connect a typed MapReduce program you supply with a list of
 -- sources and a destination.
-connect :: MapReduce a IO b -> [Tap IO a] -> Tap IO b -> Controller ()
+connect :: MapReduce a IO b -> [Tap a] -> Tap b -> Controller ()
 connect mr inp outp = Controller $ singleton $ Connect mr inp outp
 
 
 -------------------------------------------------------------------------------
-makeTap :: Protocol' IO a -> Controller (Tap IO a)
+makeTap :: Protocol' a -> Controller (Tap a)
 makeTap proto = Controller $ singleton $ MakeTap proto
 
 
@@ -421,7 +424,7 @@ binaryDirTap
     -- ^ A root location to list files under
     -> (FilePath -> Bool)
     -- ^ A filter condition to refine the listing
-    -> Controller (Tap IO B.ByteString)
+    -> Controller (Tap B.ByteString)
 binaryDirTap loc filt = Controller $ singleton $ BinaryDirTap loc filt
 
 
@@ -676,10 +679,10 @@ hadoopMain c@(Controller p) hs rr = logTo stdout $ do
 -- join inputs. Notice how we have an existential on a.
 --
 -- A join definition that ultimately produces objects of type b.
-data JoinDef m b = forall a. JoinDef {
-      joinTap  :: Tap m a
+data JoinDef b = forall a. JoinDef {
+      joinTap  :: Tap a
     , joinType :: JoinType
-    , joinMap  :: Conduit a m (JoinKey, b)
+    , joinMap  :: Conduit a IO (JoinKey, b)
     }
 
 
@@ -693,7 +696,7 @@ joinStep
        (MonadIO m, MonadThrow m,
         Show b, Monoid b, Serialize b,
         MRKey k)
-    => [(Tap m a, JoinType, Mapper a m k b)]
+    => [(Tap a, JoinType, Mapper a m k b)]
     -- ^ Dataset definitions and how to map each dataset.
     -> MapReduce a m b
 joinStep fs = MapReduce mro pSerialize mp rd
@@ -715,10 +718,10 @@ joinStep fs = MapReduce mro pSerialize mp rd
       dsIx :: M.Map FilePath DataSet
       dsIx = M.fromList dataSets
 
-      tapIx :: M.Map DataSet (Tap m a)
+      tapIx :: M.Map DataSet (Tap a)
       tapIx = M.fromList $ zip (map snd dataSets) (map (view _1) fs)
 
-      getTapDS :: Tap m a -> DataSet
+      getTapDS :: Tap a -> DataSet
       getTapDS t =
           fromMaybe (error "Can't identify dataset name for given location") $
           M.lookup (location t) dsIx

@@ -180,7 +180,7 @@ launchMapReduce HadoopEnv{..} mrKey runToken HadoopRunOpts{..} = do
     where
       mkArgs exec prog =
             [ "jar", hsJar] ++
-            compress ++ numMap ++ numRed ++ part ++ outSep ++
+            comp ++ numMap ++ numRed ++ part ++ outSep ++
             inputs ++
             [ "-output", mrsOutput
             , "-mapper", "\"" ++ prog ++ " " ++ runToken ++ " map_" ++ mrKey ++ "\""
@@ -194,7 +194,7 @@ launchMapReduce HadoopEnv{..} mrKey runToken HadoopRunOpts{..} = do
       numMap = maybe [] (\x -> ["-D", "mapred.map.tasks=" ++ show x]) mrsNumMap
       numRed = maybe [] (\x -> ["-D", "mapred.reduce.tasks=" ++ show x]) mrsNumReduce
 
-      compress =
+      comp =
         case mrsCompress of
           Just codec -> [ "-D", "mapred.output.compress=true"
                         , "-D", "mapred.output.compression.codec=" ++ codec
