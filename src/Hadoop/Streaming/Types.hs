@@ -28,7 +28,7 @@ mkKey = B.intercalate "|"
 -------------------------------------------------------------------------------
 -- | A 'Mapper' parses and converts the unbounded incoming stream of
 -- input into a stream of (key, value) pairs.
-type Mapper a m k b     = Conduit a m (k, b)
+type Mapper a k b     = Conduit a IO (k, b)
 
 
 -------------------------------------------------------------------------------
@@ -41,7 +41,7 @@ type Mapper a m k b     = Conduit a m (k, b)
 -- will be given to individual and isolated invocations of your
 -- reducer function. This is pretty much the key abstraction provided
 -- by this framework.
-type Reducer k a m r  = Conduit (k, a) m r
+type Reducer k a r  = Conduit (k, a) IO r
 
 
 -------------------------------------------------------------------------------

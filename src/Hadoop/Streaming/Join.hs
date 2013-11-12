@@ -121,10 +121,10 @@ joinOpts = def { _mroEq = eq, _mroPart = (Partition 2 1) }
 -------------------------------------------------------------------------------
 -- | Make join reducer from given table definitions
 joinReducer
-    :: (Show r, Monoid r, MonadIO m, MonadThrow m)
+    :: (Show r, Monoid r)
     => [(DataSet, JoinType)]
     -- ^ Table definitions
-    -> Reducer CompositeKey r m r
+    -> Reducer CompositeKey r r
 joinReducer fs = red def
     where
       red ja = do
@@ -203,12 +203,11 @@ joinReduceStep _ str@Streaming{} (_,x) = emitStream str x >> return str
 -- streaming filename and uses filename to determine how the mapping
 -- shoudl be done.
 joinMapper
-    :: MonadIO m
-    => (String -> DataSet)
+    :: (String -> DataSet)
     -- ^ Infer dataset from current filename
-    -> (DataSet -> Conduit a m (CompositeKey, r))
+    -> (DataSet -> Conduit a IO (CompositeKey, r))
     -- ^ Given a dataset, map it to a common data type
-    -> Mapper a m CompositeKey r
+    -> Mapper a CompositeKey r
 joinMapper getDS mkMap = do
     fi <- getFileName
     let ds = getDS fi
@@ -237,18 +236,17 @@ joinMapper getDS mkMap = do
 --
 -- For proper higher level operation, see the 'Controller' module.
 joinMain
-    :: (MonadIO m, MonadThrow m, MonadUnsafeIO m,
-        Serialize r, Monoid r, Show r)
+    :: (Serialize r, Monoid r, Show r)
     => DataDefs
     -- ^ Define your tables
     -> (String -> DataSet)
     -- ^ Infer dataset from input filename
-    -> (DataSet -> Conduit B.ByteString m (CompositeKey, r))
+    -> (DataSet -> Conduit B.ByteString IO (CompositeKey, r))
     -- ^ Map input stream to a join key and the common-denominator
     -- uniform data type we know how to 'mconcat'.
     -> Prism' B.ByteString r
     -- ^ Choose serialization method for final output.
-    -> m ()
+    -> IO ()
 joinMain fs getDS mkMap out = mapReduceMain joinOpts pSerialize mp rd
     where
 

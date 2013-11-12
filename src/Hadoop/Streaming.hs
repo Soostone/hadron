@@ -183,14 +183,13 @@ mapper f = do
 -- | Build a main function entry point for a reducer. The buck stops
 -- here and we tag each bytestring line with a newline.
 reducerMain
-    :: (MonadIO m, MonadThrow m, MonadUnsafeIO m)
-    => MROptions
+    :: MROptions
     -> Prism' B.ByteString a
-    -> Reducer CompositeKey a m B.ByteString
+    -> Reducer CompositeKey a B.ByteString
     -- ^ Important: It is assumed that each 'ByteString' here will end
     -- (your responsibility) with a newline, therefore constituting a
     -- line for the Hadoop ecosystem.
-    -> m ()
+    -> IO ()
 reducerMain mro@MROptions{..} mrInPrism g =
     reducer mro mrInPrism g $=
     C.mapM_ emitOutput $$
@@ -201,13 +200,12 @@ reducerMain mro@MROptions{..} mrInPrism g =
 -- | An easy way to construct a reducer pogram. Just supply the
 -- arguments and you're done.
 reducer
-    :: (MonadIO m, MonadThrow m)
-    => MROptions
+    :: MROptions
     -> Prism' B.ByteString a
     -- ^ Input conversion function
-    -> Reducer CompositeKey a m B.ByteString
+    -> Reducer CompositeKey a B.ByteString
     -- ^ A step function for the given key.
-    -> Source m B.ByteString
+    -> Source IO B.ByteString
 reducer MROptions{..} mrInPrism f = do
     liftIO $ hSetBuffering stderr LineBuffering
     liftIO $ hSetBuffering stdout LineBuffering
@@ -265,13 +263,12 @@ reducer MROptions{..} mrInPrism f = do
 
 -------------------------------------------------------------------------------
 mapReduce
-    :: (MonadIO m, MonadThrow m, MonadUnsafeIO m)
-    => MROptions
+    :: MROptions
     -> Prism' B.ByteString a
     -- ^ Serialization for data between map and reduce stages
-    -> Mapper B.ByteString m CompositeKey a
-    -> Reducer CompositeKey a m B.ByteString
-    -> (m (), m ())
+    -> Mapper B.ByteString CompositeKey a
+    -> Reducer CompositeKey a B.ByteString
+    -> (IO (), IO ())
 mapReduce mro mrInPrism f g = (mp, rd)
     where
       mp = mapperWith mrInPrism f
@@ -288,14 +285,13 @@ mapReduce mro mrInPrism f g = (mp, rd)
 -- > ./myProgram map
 -- > ./myProgram reduce
 mapReduceMain
-    :: (MonadIO m, MonadThrow m, MonadUnsafeIO m)
-    => MROptions
+    :: MROptions
     -> Prism' B.ByteString a
     -- ^ Serialization function for the in-between data 'a'.
-    -> Mapper B.ByteString m CompositeKey a
-    -> Reducer CompositeKey a m B.ByteString
+    -> Mapper B.ByteString CompositeKey a
+    -> Reducer CompositeKey a B.ByteString
     -- ^ Reducer for a stream of values belonging to the same key.
-    -> m ()
+    -> IO ()
 mapReduceMain mro mrInPrism f g = liftIO (execParser opts) >>= run
   where
     (mp,rd) = mapReduce mro mrInPrism f g

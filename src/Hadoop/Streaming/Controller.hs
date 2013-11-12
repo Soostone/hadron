@@ -239,32 +239,32 @@ instance (Serialize a, Serialize b, Serialize c, Serialize d, Serialize e, Seria
 
 -------------------------------------------------------------------------------
 -- | Do something with m-r output before writing it to a tap.
-(>.>) :: Monad m => MapReduce a m b -> Conduit b m c -> MapReduce a m c
+(>.>) :: MapReduce a b -> Conduit b IO c -> MapReduce a c
 (MapReduce o p m r) >.> f = MapReduce o p m (r =$= f)
 
 
 -------------------------------------------------------------------------------
 -- | Dome something with the m-r input before starting the map stage.
-(<.<) :: Monad m => Conduit c m a -> MapReduce a m b -> MapReduce c m b
+(<.<) :: Conduit c IO a -> MapReduce a b -> MapReduce c b
 f <.< (MapReduce o p m r) = MapReduce o p (f =$= m) r
 
 -------------------------------------------------------------------------------
 -- | A packaged MapReduce step. Make one of these for each distinct
 -- map-reduce step in your overall 'Controller' flow.
-data MapReduce a m b = forall k v. MRKey k => MapReduce {
+data MapReduce a b = forall k v. MRKey k => MapReduce {
       _mrOptions :: MROptions
     -- ^ Hadoop and MapReduce options affecting only this specific
     -- job.
     , _mrInPrism :: Prism' B.ByteString v
     -- ^ A serialization scheme for values between the map-reduce
     -- steps.
-    , _mrMapper  :: Mapper a m k v
-    , _mrReducer :: Reducer k v m b
+    , _mrMapper  :: Mapper a k v
+    , _mrReducer :: Reducer k v b
     }
 
 
 -------------------------------------------------------------------------------
-mrOptions :: Lens' (MapReduce a m b) MROptions
+mrOptions :: Lens' (MapReduce a b) MROptions
 mrOptions f (MapReduce o p m r) = (\ o' -> MapReduce o' p m r) <$> f o
 
 makeLenses ''MapReduce
@@ -352,7 +352,7 @@ makeLenses ''ContState
 
 -------------------------------------------------------------------------------
 data ConI a where
-    Connect :: forall i o. MapReduce i IO o
+    Connect :: forall i o. MapReduce i o
             -> [Tap i] -> Tap o
             -> ConI ()
     MakeTap :: Protocol' a -> ConI (Tap a)
@@ -378,7 +378,7 @@ newtype Controller a = Controller { unController :: Program ConI a }
 -- | Connect a MapReduce program to a set of inputs, returning the
 -- output tap that was implicity generated (on hdfs) in the process.
 connect'
-    :: MapReduce a IO b
+    :: MapReduce a b
     -- ^ MapReduce step to run
     -> [Tap a]
     -- ^ Input files
@@ -394,7 +394,7 @@ connect' mr inp proto = do
 -------------------------------------------------------------------------------
 -- | Connect a typed MapReduce program you supply with a list of
 -- sources and a destination.
-connect :: MapReduce a IO b -> [Tap a] -> Tap b -> Controller ()
+connect :: MapReduce a b -> [Tap a] -> Tap b -> Controller ()
 connect mr inp outp = Controller $ singleton $ Connect mr inp outp
 
 
@@ -692,13 +692,12 @@ data JoinDef b = forall a. JoinDef {
 -- operation for each tap, the reduce step is assumed to be the
 -- Monoidal 'mconcat'.
 joinStep
-    :: forall m k b a.
-       (MonadIO m, MonadThrow m,
-        Show b, Monoid b, Serialize b,
+    :: forall k b a.
+       (Show b, Monoid b, Serialize b,
         MRKey k)
-    => [(Tap a, JoinType, Mapper a m k b)]
+    => [(Tap a, JoinType, Mapper a k b)]
     -- ^ Dataset definitions and how to map each dataset.
-    -> MapReduce a m b
+    -> MapReduce a b
 joinStep fs = MapReduce mro pSerialize mp rd
     where
       showBS = B.pack . show
