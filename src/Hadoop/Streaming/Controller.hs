@@ -252,16 +252,17 @@ f <.< (MapReduce o p m r) = MapReduce o p (f =$= m) r
 -- | A packaged MapReduce step. Make one of these for each distinct
 -- map-reduce step in your overall 'Controller' flow.
 data MapReduce a m b = forall k v. MRKey k => MapReduce {
-      mrOptions :: MROptions
+      _mrOptions :: MROptions
     -- ^ Hadoop and MapReduce options affecting only this specific
     -- job.
-    , mrInPrism :: Prism' B.ByteString v
+    , _mrInPrism :: Prism' B.ByteString v
     -- ^ A serialization scheme for values between the map-reduce
     -- steps.
-    , mrMapper  :: Mapper a m k v
-    , mrReducer :: Reducer k v m b
+    , _mrMapper  :: Mapper a m k v
+    , _mrReducer :: Reducer k v m b
     }
 
+makeLenses ''MapReduce
 
 -- | Tap is a data source/sink definition that *knows* how to serve
 -- records of type 'a'.
@@ -694,7 +695,7 @@ joinStep fs = MapReduce mro pSerialize mp rd
       showBS = B.pack . show
       n = numKeys (undefined :: k)
 
-      mro = joinOpts { mroPart = Partition (n+1) n }
+      mro = joinOpts { _mroPart = Partition (n+1) n }
 
       locations :: [FilePath]
       locations = map (location . view _1) fs

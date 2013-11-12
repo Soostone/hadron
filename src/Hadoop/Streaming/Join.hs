@@ -113,7 +113,7 @@ emitStream _ _ = error "emitStream can't be called unless it's in Streaming mode
 
 -------------------------------------------------------------------------------
 joinOpts :: MROptions
-joinOpts = def { mroEq = eq, mroPart = (Partition 2 1) }
+joinOpts = def { _mroEq = eq, _mroPart = (Partition 2 1) }
     where
       eq as bs = init as == init bs
 

@@ -1,10 +1,12 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes        #-}
 {-# LANGUAGE RecordWildCards   #-}
+{-# LANGUAGE TemplateHaskell   #-}
 
 module Hadoop.Streaming.Types where
 
 -------------------------------------------------------------------------------
+import           Control.Lens
 import qualified Data.ByteString.Char8   as B
 import           Data.Conduit
 import           Data.Default
@@ -45,20 +47,20 @@ type Reducer k a m r  = Conduit (k, a) m r
 -------------------------------------------------------------------------------
 -- | Options for a single-step MR job.
 data MROptions = MROptions {
-      mroEq        :: (CompositeKey -> CompositeKey -> Bool)
+      _mroEq        :: (CompositeKey -> CompositeKey -> Bool)
     -- ^ An equivalence test for incoming keys. True means given two
     -- keys are part of the same reduce series.
-    , mroPart      :: PartitionStrategy
+    , _mroPart      :: PartitionStrategy
     -- ^ Number of segments to expect in incoming keys. Affects both
     -- hadron program's understanding of key AND Hadoop's distribution
     -- of map output to reducers.
-    , mroNumMap    :: Maybe Int
+    , _mroNumMap    :: Maybe Int
     -- ^ Number of map tasks; 'Nothing' leaves it to Hadoop to decide.
-    , mroNumReduce :: Maybe Int
+    , _mroNumReduce :: Maybe Int
     -- ^ Number of reduce tasks; 'Nothing' leaves it to Hadoop to decide.
-    , mroCompress  :: Maybe String
+    , _mroCompress  :: Maybe String
     -- ^ Whether to use compression on reduce output.
-    , mroOutSep    :: Maybe Char
+    , _mroOutSep    :: Maybe Char
     -- ^ Separator to be communicated to Hadoop for the reduce output.
     -- Sets both the 'stream.reduce.output.field.separator' and
     -- 'mapred.textoutputformat.separator' parameters. Sometimes
@@ -72,6 +74,8 @@ data MROptions = MROptions {
     }
 
 
+makeLenses '' MROptions
+
 instance Default MROptions where
     def = MROptions (==) NoPartition Nothing Nothing Nothing Nothing
 
@@ -79,9 +83,9 @@ instance Default MROptions where
 -------------------------------------------------------------------------------
 -- | Obtain baseline Hadoop run-time options from provided step options
 mrOptsToRunOpts :: MROptions -> HadoopRunOpts
-mrOptsToRunOpts MROptions{..} = def { mrsPart = mroPart
-                                    , mrsNumMap = mroNumMap
-                                    , mrsNumReduce = mroNumReduce
-                                    , mrsCompress = mroCompress
-                                    , mrsOutSep = mroOutSep }
+mrOptsToRunOpts MROptions{..} = def { mrsPart = _mroPart
+                                    , mrsNumMap = _mroNumMap
+                                    , mrsNumReduce = _mroNumReduce
+                                    , mrsCompress = _mroCompress
+                                    , mrsOutSep = _mroOutSep }
 

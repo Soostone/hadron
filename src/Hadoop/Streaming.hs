@@ -232,7 +232,7 @@ reducer MROptions{..} mrInPrism f = do
             Just x@(k,_) ->
               case cur of
                 Just curKey -> do
-                  case mroEq curKey k of
+                  case _mroEq curKey k of
                     True -> yield x >> sameKey cur
                     False -> leftover x
                 Nothing -> do
@@ -247,7 +247,7 @@ reducer MROptions{..} mrInPrism f = do
       every = 1
 
       stream = sourceHandle stdin =$=
-               lineC (numSegs mroPart) =$=
+               lineC (numSegs _mroPart) =$=
                -- performEvery every logIn =$=
                C.mapMaybe (_2 (firstOf mrInPrism)) =$=
                -- performEvery every logConv =$=
