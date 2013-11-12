@@ -41,6 +41,7 @@ module Hadoop.Streaming.Controller
     , io
 
     , MapReduce (..)
+    , mrOptions
     , Mapper
     , Reducer
     , (>.>)
@@ -261,6 +262,11 @@ data MapReduce a m b = forall k v. MRKey k => MapReduce {
     , _mrMapper  :: Mapper a m k v
     , _mrReducer :: Reducer k v m b
     }
+
+
+-------------------------------------------------------------------------------
+mrOptions :: Lens' (MapReduce a m b) MROptions
+mrOptions f (MapReduce o p m r) = (\ o' -> MapReduce o' p m r) <$> f o
 
 makeLenses ''MapReduce
 
