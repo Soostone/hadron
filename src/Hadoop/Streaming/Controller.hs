@@ -281,7 +281,7 @@ makeLenses ''MapReduce
 --
 -- > customers = 'tap' "s3n://my-bucket/customers" (csvProtocol def)
 data Tap a = Tap
-    { location :: FilePath
+    { location :: [FilePath]
     , proto    :: Protocol' a
     }
 
@@ -293,8 +293,9 @@ instance Eq (Tap a) where
 
 -- | Construct a 'DataDef'
 tap :: FilePath -> Protocol' a -> Tap a
-tap fp p = Tap fp p
+tap fp p = Tap [fp] p
 
+taps fp p = Tap fp p
 
 -------------------------------------------------------------------------------
 -- | TODO: This can't be defined yet because taps can have only a
@@ -497,7 +498,7 @@ orchestrate (Controller p) settings rr s = evalStateT (runEitherT (go p)) s
           curId <- pickId
           tapLens curId .= Just (B.pack loc)
 
-          return $ Tap loc proto
+          return $ Tap [loc] proto
 
       eval' (BinaryDirTap loc filt) = do
           localFile <- liftIO $ setupBinaryDir settings loc filt
@@ -518,20 +519,20 @@ orchestrate (Controller p) settings rr s = evalStateT (runEitherT (go p)) s
             go' = do
                 mrKey <- newMRKey
 
-                chk <- liftIO $ hdfsFileExists settings (location outp)
-                case chk of
+                chk <- liftIO $ mapM (hdfsFileExists settings) (location outp)
+                case any id chk of
                   False -> go'' mrKey
                   True ->
                     case rr of
                       RSFail -> lift $ $(logError) $ T.concat
-                        ["Destination file exists: ", T.pack (location outp)]
+                        ["Destination exists: ", T.pack $ head (location outp)]
                       RSSkip -> lift $ $(logInfo) $ T.concat
-                        ["Desitnation exists. Skipping ", T.pack (location outp)]
+                        ["Desitnation exists. Skipping ", T.intercalate ", " $ map T.pack (location outp)]
                       RSReRun -> do
                         lift $ $(logInfo) $ T.pack $
                           "Destination file exists, will delete and rerun: " ++
-                          location outp
-                        _ <- liftIO $ hdfsDeletePath settings (location outp)
+                          head (location outp)
+                        _ <- liftIO $ mapM_ (hdfsDeletePath settings) (location outp)
                         go'' mrKey
 
 
@@ -547,8 +548,8 @@ orchestrate (Controller p) settings rr s = evalStateT (runEitherT (go p)) s
 
               let mrs = mrOptsToRunOpts mro
               launchMapReduce settings mrKey runToken
-                mrs { mrsInput = map location inp
-                    , mrsOutput = location outp }
+                mrs { mrsInput = concatMap location inp
+                    , mrsOutput = head (location outp) }
 
 
 
@@ -621,7 +622,7 @@ hadoopMain c@(Controller p) hs rr = logTo stdout $ do
           dynLoc <- use $ tapLens curId
           case dynLoc of
             Nothing -> error $ "Dynamic location can't be determined for MakTap at index " <> show curId
-            Just loc' -> return $ Tap (B.unpack loc') proto
+            Just loc' -> return $ Tap ([B.unpack loc']) proto
 
       go _ _ (BinaryDirTap loc _) = do
 
@@ -706,7 +707,10 @@ joinStep fs = MapReduce mro pSerialize mp rd
       mro = joinOpts { _mroPart = Partition (n+1) n }
 
       locations :: [FilePath]
-      locations = map (location . view _1) fs
+      locations = concatMap (location . view _1) fs
+
+      taps :: [Tap a]
+      taps = concatMap ((\t -> replicate (length (location t)) t) . view _1) fs
 
       locations' = map B.pack locations
 
@@ -718,16 +722,15 @@ joinStep fs = MapReduce mro pSerialize mp rd
       dsIx = M.fromList dataSets
 
       tapIx :: M.Map DataSet (Tap a)
-      tapIx = M.fromList $ zip (map snd dataSets) (map (view _1) fs)
+      tapIx = M.fromList $ zip (map snd dataSets) taps
 
-      getTapDS :: Tap a -> DataSet
-      getTapDS t =
-          fromMaybe (error "Can't identify dataset name for given location") $
-          M.lookup (location t) dsIx
+      getTapDS :: Tap a -> [DataSet]
+      getTapDS t = mapMaybe (flip M.lookup dsIx) (location t)
 
 
       fs' :: [(DataSet, JoinType)]
-      fs' = map (\ (t, jt, _) -> (getTapDS t, jt)) fs
+      fs' = concatMap (\ (t, jt, _) -> for (getTapDS t) $ \ ds -> (ds, jt) ) fs
+      for = flip map
 
 
       -- | get dataset name from a given input filename
@@ -746,5 +749,12 @@ joinStep fs = MapReduce mro pSerialize mp rd
       mp = joinMapper getDS mkMap'
 
       rd =  joinReducer fs'
+
+
+
+
+
+
+
 
 
