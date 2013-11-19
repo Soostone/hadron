@@ -598,7 +598,8 @@ hadoopMain c@(Controller p) hs rr = logTo stdout $ do
         res <- orchestrate c hs rr def
         liftIO $ either print (const $ putStrLn "Success.") res
       [runToken, arg] -> do
-        _ <- evalStateT (loadState runToken >> interpretWithMonad (go runToken arg) p) def
+        _ <- evalStateT (loadState runToken >>
+                         interpretWithMonad (go runToken arg) p) def
         return ()
       _ -> error "Usage: No arguments for job control or a phase name."
     where
@@ -634,7 +635,8 @@ hadoopMain c@(Controller p) hs rr = logTo stdout $ do
           curId <- pickId
           dynLoc <- use $ tapLens curId
           case dynLoc of
-            Nothing -> error $ "Dynamic location can't be determined for BinaryDirTap at: " <> loc
+            Nothing -> error $
+              "Dynamic location can't be determined for BinaryDirTap at: " <> loc
             Just loc' -> return $ fileListTap hs $ B.unpack loc'
 
       -- setting in map-reduce phase is a no-op... There's nobody to
@@ -880,18 +882,13 @@ oneSnap s3fp f = do
 -- into the common monoid, which is then collapsed during reduce.
 joinMR
     :: forall a b k v. (MRKey k, Monoid v, Serialize v)
-    => (a -> [(k, v)])
-    -- ^ Mapper for one type
-    -> (b -> [(k, v)])
-    -- ^ Mapper for the other type
+    => Conduit (Either a b) IO (k, Either v v)
+    -- ^ Mapper for the input
     -> MapReduce (Either a b) v
-joinMR f g = MapReduce mro pSerialize (C.concatMap mp) red
+joinMR mp = MapReduce mro pSerialize mp red
     where
       mro = def { _mroPart = Partition n n }
       n = numKeys (undefined :: k)
-
-      mp (Left x) = (traverse._2) %~ Left $ f x
-      mp (Right y) = (traverse._2) %~ Right $ g y
 
       red = do
           xs <- C.consume <&> map snd
