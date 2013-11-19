@@ -1,5 +1,5 @@
 name:                hadron
-version:             0.2.1
+version:             0.2.2
 description:         Use Haskell programs for data processing with Hadoop
 license:             BSD3
 license-file:        LICENSE

@@ -95,6 +95,10 @@ module Hadoop.Streaming.Controller
     , JoinType (..)
     , JoinKey
 
+    -- , E (..)
+    -- , isL, isR
+    , mergeTaps
+
     -- * Data Serialization Utilities
     , module Hadoop.Streaming.Protocol
 
@@ -295,15 +299,9 @@ instance Eq (Tap a) where
 tap :: FilePath -> Protocol' a -> Tap a
 tap fp p = Tap [fp] p
 
+taps :: [FilePath] -> Protocol' a -> Tap a
 taps fp p = Tap fp p
 
--------------------------------------------------------------------------------
--- | TODO: This can't be defined yet because taps can have only a
--- single location. Get taps to accept a list of locations...
-eitherTap
-    :: Either (FilePath, Protocol' a) (FilePath, Protocol' b)
-    -> Tap (Either a b)
-eitherTap = undefined
 
 ------------------------------------------------------------------------------
 -- | Conduit that takes in hdfs filenames and outputs the file contents.
@@ -676,15 +674,15 @@ hadoopMain c@(Controller p) hs rr = logTo stdout $ do
             Nothing -> return ()
 
 
--- | TODO: See if this works. Objective is to increase type safety of
--- join inputs. Notice how we have an existential on a.
---
--- A join definition that ultimately produces objects of type b.
-data JoinDef b = forall a. JoinDef {
-      joinTap  :: Tap a
-    , joinType :: JoinType
-    , joinMap  :: Conduit a IO (JoinKey, b)
-    }
+-- -- | TODO: See if this works. Objective is to increase type safety of
+-- -- join inputs. Notice how we have an existential on a.
+-- --
+-- -- A join definition that ultimately produces objects of type b.
+-- data JoinDef b = forall a. JoinDef {
+--       joinTap  :: Tap a
+--     , joinType :: JoinType
+--     , joinMap  :: Conduit a IO (JoinKey, b)
+--     }
 
 
 -------------------------------------------------------------------------------
@@ -752,6 +750,32 @@ joinStep fs = MapReduce mro pSerialize mp rd
 
 
 
+
+-- data E a b = L a | R b deriving (Eq,Show,Read,Ord)
+
+-- isL L{} = True
+-- isL R{} = False
+
+-- isR = not . isL
+
+
+-------------------------------------------------------------------------------
+mergeTaps :: Tap a -> Tap b -> Tap (Either a b)
+mergeTaps ta tb = Tap (location ta ++ location tb) newP
+    where
+      newP = Protocol enc dec
+
+      dec = do
+          fn <- lift getFileName
+          if (any (flip isInfixOf fn) (map (takeWhile (/= '*')) $ location ta))
+            then (protoDec . proto) ta =$= C.map Left
+            else (protoDec . proto) tb =$= C.map Right
+
+      enc =
+          awaitForever $ \ res ->
+              case res of
+                Left a -> yield a =$= (protoEnc . proto) ta
+                Right b -> yield b =$= (protoEnc . proto) tb
 
 
 
