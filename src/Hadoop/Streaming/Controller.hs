@@ -528,9 +528,10 @@ orchestrate (Controller p) settings rr s = evalStateT (runEitherT (go p)) s
                   True ->
                     case rr of
                       RSFail -> lift $ $(logError) $ T.concat
-                        ["Destination exists: ", T.pack $ head (location outp)]
+                        [ "Destination exists: ", T.pack $ head (location outp)]
                       RSSkip -> lift $ $(logInfo) $ T.concat
-                        ["Desitnation exists. Skipping ", T.intercalate ", " $ map T.pack (location outp)]
+                        [ "Destination exists. Skipping ", T.intercalate ", " $
+                          map T.pack (location outp)]
                       RSReRun -> do
                         lift $ $(logInfo) $ T.pack $
                           "Destination file exists, will delete and rerun: " ++
