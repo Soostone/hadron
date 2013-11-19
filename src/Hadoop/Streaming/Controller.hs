@@ -876,10 +876,14 @@ oneSnap s3fp f = do
 
 
 -------------------------------------------------------------------------------
+-- | Monoidal inner (map-side) join for two types. Each type is mapped
+-- into the common monoid, which is then collapsed during reduce.
 joinMR
     :: forall a b k v. (MRKey k, Monoid v, Serialize v)
     => (a -> [(k, v)])
+    -- ^ Mapper for one type
     -> (b -> [(k, v)])
+    -- ^ Mapper for the other type
     -> MapReduce (Either a b) v
 joinMR f g = MapReduce mro pSerialize (C.concatMap mp) red
     where
