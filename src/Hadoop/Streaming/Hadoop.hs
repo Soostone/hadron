@@ -194,7 +194,8 @@ launchMapReduce HadoopEnv{..} mrKey runToken HadoopRunOpts{..} = do
             , "-file", exec
             ]
 
-      jobName = maybe [] (\nm -> ["-D", "mapred.job.name='", nm, "'"]) mrsJobName
+      jobName = maybe [] (\nm -> ["-D", "mapred.job.name=\"" <> nm <>"\""])
+                mrsJobName
 
       inputs = concatMap mkInput mrsInput
       mkInput i = ["-input", i]
