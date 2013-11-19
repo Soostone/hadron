@@ -56,7 +56,8 @@ library
      zlib-conduit,
      directory,
      lcs,
-     stringsearch
+     stringsearch,
+     async
 
   ghc-options:         -Wall -O2 
                        -fwarn-tabs

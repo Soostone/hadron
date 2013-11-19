@@ -48,6 +48,7 @@ module Hadoop.Streaming.Hadoop
     ) where
 
 -------------------------------------------------------------------------------
+import           Control.Concurrent.Async
 import           Control.Error
 import           Control.Exception.Lens
 import           Control.Lens
@@ -358,10 +359,17 @@ hdfsLocalStreamMulti
     -> Source m ByteString
 hdfsLocalStreamMulti hs loc chk = do
     fs <- liftIO $ hdfsLs hs loc <&> filter chk
-    forM_ fs $ \ fp -> do
-        let getFile = hdfsLocalStream hs fp
+    lfs <- liftIO $ mapConcurrently (hdfsGet hs) fs
+    forM_ (zip lfs fs) $ \ (local, fp) -> do
+        h <- liftIO $ catching _IOException
+             (openFile local ReadMode)
+             (\e ->  error $ "hdfsLocalStream failed with open file: " <> show e)
+        let getFile = sourceHandle h
         if isSuffixOf "gz" fp
-        then getFile =$= ungzip
-        else getFile
+          then getFile =$= ungzip
+          else getFile
+        liftIO $ do
+          hClose h
+          removeFile local
 
 
