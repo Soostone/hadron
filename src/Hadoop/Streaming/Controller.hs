@@ -54,6 +54,8 @@ module Hadoop.Streaming.Controller
     -- * Data Sources
     , Tap (..)
     , tap
+    , taps
+    , mergeTaps
     , binaryDirTap
     , setupBinaryDir
     , fileListTap
@@ -95,7 +97,11 @@ module Hadoop.Streaming.Controller
     , JoinType (..)
     , JoinKey
 
-    , mergeTaps
+    , mapReduce
+    , firstBy
+    , mapMR
+    , oneSnap
+    , joinMR
 
     -- * Data Serialization Utilities
     , module Hadoop.Streaming.Protocol
@@ -108,6 +114,7 @@ import           Control.Error
 import           Control.Exception
 import           Control.Exception.Lens
 import           Control.Lens
+import           Control.Monad.Morph
 import           Control.Monad.Operational hiding (view)
 import qualified Control.Monad.Operational as O
 import           Control.Monad.State
@@ -129,7 +136,7 @@ import           System.Environment
 import           System.FilePath
 import           System.IO
 -------------------------------------------------------------------------------
-import           Hadoop.Streaming
+import           Hadoop.Streaming          hiding (mapReduce)
 import           Hadoop.Streaming.Hadoop
 import           Hadoop.Streaming.Join
 import           Hadoop.Streaming.Logger
@@ -660,8 +667,10 @@ hadoopMain c@(Controller p) hs rr = logTo stdout $ do
               curFile <- getFileName
               catching exception mp'
                 (\ (e :: SomeException) ->
-                     error $ "Exception raised during Map in stage " <> show mrKey <>
-                             " while processing file " <> curFile <> ": " <> show e)
+                     error $ "Exception raised during Map in stage " <>
+                             show mrKey <>
+                             " while processing file " <> curFile <>
+                             ": " <> show e)
 
             Just (Reduce, _) -> liftIO $ do
               catching exception red
@@ -750,6 +759,7 @@ joinStep fs = MapReduce mro pSerialize mp rd
 
 
 -------------------------------------------------------------------------------
+-- | Combine two taps intelligently into the Either sum type.
 mergeTaps :: Tap a -> Tap b -> Tap (Either a b)
 mergeTaps ta tb = Tap (location ta ++ location tb) newP
     where
@@ -771,4 +781,116 @@ mergeTaps ta tb = Tap (location ta ++ location tb) newP
 
 
 
+-------------------------------------------------------------------------------
+-- | A generic map-reduce function that should be good enough for most
+-- cases.
+mapReduce
+    :: forall a k v b. (MRKey k, Serialize v)
+    => (a -> MaybeT IO [(k, v)])
+    -- ^ Common map key
+    -> (k -> b -> v -> IO b)
+    -- ^ Left fold in reduce stage
+    -> b
+    -- ^ A starting point for fold
+    -> MapReduce a (k,b)
+mapReduce mp rd a0 = MapReduce mro pSerialize m r
+    where
+      n = numKeys (undefined :: k)
+      mro = def { _mroPart = Partition n n }
+
+      m :: Mapper a k v
+      m = awaitForever $ \ a -> runMaybeT $ hoist lift (mp a) >>= lift . C.sourceList
+
+      r :: Reducer k v (k,b)
+      r = do
+          (k, b) <- C.foldM step (Nothing, a0)
+          case k of
+            Nothing -> return ()
+            Just k' -> yield (k', b)
+
+
+      step (_, acc) (k, v) = do
+          !b <- rd k acc v
+          return (Just k, b)
+
+
+
+
+-------------------------------------------------------------------------------
+-- | Deduplicate input objects that have the same key value; the first
+-- object seen for each key will be kept.
+firstBy
+    :: forall a k. (Serialize a, MRKey k)
+    => (a -> MaybeT IO [k])
+    -- ^ Key making function
+    -> MapReduce a a
+firstBy f = mapReduce mp rd Nothing >.> (C.map snd =$= C.catMaybes)
+    where
+      mp :: a -> MaybeT IO [(k, a)]
+      mp a = do
+          k <- f a
+          return $ zip k (repeat a)
+
+      rd :: k -> Maybe a -> a -> IO (Maybe a)
+      rd _ Nothing a = return $! Just a
+      rd _ acc _ = return $! acc
+
+
+-------------------------------------------------------------------------------
+-- | A generic map-only MR step.
+mapMR :: (Serialize v) => (v -> b) -> MapReduce v b
+mapMR f = MapReduce def pSerialize mp rd
+    where
+      mp = do
+          rng <- liftIO mkRNG
+          let send a = do
+                  t <- liftIO $ randomToken 2 rng
+                  return (t, a)
+          C.mapM send
+      rd = C.map (f . snd)
+
+
+-------------------------------------------------------------------------------
+-- | Do somthing with only the first row we see, putting the result in
+-- the given HDFS destination.
+oneSnap
+    :: FilePath
+    -> (a -> B.ByteString)
+    -> Conduit a IO a
+oneSnap s3fp f = do
+    h <- await
+    case h of
+      Nothing -> return ()
+      Just h' -> do
+          liftIO $ putHeaders (f h')
+          yield h'
+          awaitForever yield
+  where
+    putHeaders x = do
+        tmp <- randomFilename
+        B.writeFile tmp x
+        chk <- hdfsFileExists amazonEMR s3fp
+        when (not chk) $ hdfsPut amazonEMR tmp s3fp >> return ()
+        removeFile tmp
+
+
+
+-------------------------------------------------------------------------------
+joinMR
+    :: forall a b k v. (MRKey k, Monoid v, Serialize v)
+    => (a -> [(k, v)])
+    -> (b -> [(k, v)])
+    -> MapReduce (Either a b) v
+joinMR f g = MapReduce mro pSerialize (C.concatMap mp) red
+    where
+      mro = def { _mroPart = Partition n n }
+      n = numKeys (undefined :: k)
+
+      mp (Left x) = (traverse._2) %~ Left $ f x
+      mp (Right y) = (traverse._2) %~ Right $ g y
+
+      red = do
+          xs <- C.consume <&> map snd
+          let (ls, rs) = partition isLeft xs & over (both.traverse) (view chosen)
+          mapM_ yield [mappend a b | a <- ls, b <- rs]
 

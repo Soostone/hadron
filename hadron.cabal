@@ -36,6 +36,7 @@ library
      data-default,
      directory,
      errors,
+     mmorph,
      fast-logger,
      filepath,
      hashable,

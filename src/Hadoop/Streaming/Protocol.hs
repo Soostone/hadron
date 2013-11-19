@@ -28,6 +28,9 @@ module Hadoop.Streaming.Protocol
     , lineC
     , mkKey
 
+    , eitherPrism
+    , eitherProtocol
+
 
     ) where
 
@@ -218,3 +221,29 @@ lineC n = linesConduit =$= C.map ppair
             -- ^ Re-assemble remaining segments to restore
             -- correctness.
             spl = B.split '\t' line
+
+
+
+
+-------------------------------------------------------------------------------
+-- | Only works when a and b are disjoint types.
+eitherPrism :: Prism' B.ByteString a -> Prism' B.ByteString b -> Prism' B.ByteString (Either a b)
+eitherPrism f g = prism' enc dec
+    where
+      enc (Left a) = review f a
+      enc (Right b) = review g b
+
+      dec bs = (preview f bs <&> Left)
+               `mplus`
+               (preview g bs <&> Right)
+
+
+-------------------------------------------------------------------------------
+eitherProtocol
+    :: Prism' B.ByteString a
+    -> Prism' B.ByteString b
+    -> Protocol' (Either a b)
+eitherProtocol f g = prismToProtocol (eitherPrism f g)
+
+
+
