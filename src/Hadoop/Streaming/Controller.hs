@@ -358,6 +358,7 @@ makeLenses ''ContState
 data ConI a where
     Connect :: forall i o. MapReduce i o
             -> [Tap i] -> Tap o
+            -> Maybe String
             -> ConI ()
     MakeTap :: Protocol' a -> ConI (Tap a)
     BinaryDirTap :: FilePath -> (FilePath -> Bool) -> ConI (Tap B.ByteString)
@@ -388,18 +389,20 @@ connect'
     -- ^ Input files
     -> Protocol' b
     -- ^ Serialization protocol to be used on the output
+    -> Maybe String
+    -- ^ A custom name for the job
     -> Controller (Tap b)
-connect' mr inp proto = do
+connect' mr inp proto nm = do
     out <- makeTap proto
-    connect mr inp out
+    connect mr inp out nm
     return out
 
 
 -------------------------------------------------------------------------------
 -- | Connect a typed MapReduce program you supply with a list of
 -- sources and a destination.
-connect :: MapReduce a b -> [Tap a] -> Tap b -> Controller ()
-connect mr inp outp = Controller $ singleton $ Connect mr inp outp
+connect :: MapReduce a b -> [Tap a] -> Tap b -> Maybe String -> Controller ()
+connect mr inp outp nm = Controller $ singleton $ Connect mr inp outp nm
 
 
 -------------------------------------------------------------------------------
@@ -517,7 +520,7 @@ orchestrate (Controller p) settings rr s = evalStateT (runEitherT (go p)) s
       eval' (SetVal k v) = csMRVars . at k .= Just v
       eval' (GetVal k) = use (csMRVars . at k)
 
-      eval' (Connect mr@(MapReduce mro mrInPrism _ _) inp outp) = go'
+      eval' (Connect mr@(MapReduce mro mrInPrism _ _) inp outp nm) = go'
           where
             go' = do
                 mrKey <- newMRKey
@@ -553,7 +556,9 @@ orchestrate (Controller p) settings rr s = evalStateT (runEitherT (go p)) s
               let mrs = mrOptsToRunOpts mro
               launchMapReduce settings mrKey runToken
                 mrs { mrsInput = concatMap location inp
-                    , mrsOutput = head (location outp) }
+                    , mrsOutput = head (location outp)
+                    , mrsJobName = nm
+                    }
 
 
 
@@ -645,7 +650,7 @@ hadoopMain c@(Controller p) hs rr = logTo stdout $ do
       go _ _ (SetVal _ _) = return ()
       go _ _ (GetVal k) = use (csMRVars . at k)
 
-      go _ arg (Connect (MapReduce mro mrInPrism mp rd) inp outp) = do
+      go _ arg (Connect (MapReduce mro mrInPrism mp rd) inp outp _) = do
           mrKey <- newMRKey
 
           let dec = protoDec . proto $ head inp
@@ -717,8 +722,8 @@ joinStep fs = MapReduce mro pSerialize mp rd
       locations :: [FilePath]
       locations = concatMap (location . view _1) fs
 
-      taps :: [Tap a]
-      taps = concatMap ((\t -> replicate (length (location t)) t) . view _1) fs
+      taps' :: [Tap a]
+      taps' = concatMap ((\t -> replicate (length (location t)) t) . view _1) fs
 
       locations' = map B.pack locations
 
@@ -730,7 +735,7 @@ joinStep fs = MapReduce mro pSerialize mp rd
       dsIx = M.fromList dataSets
 
       tapIx :: M.Map DataSet (Tap a)
-      tapIx = M.fromList $ zip (map snd dataSets) taps
+      tapIx = M.fromList $ zip (map snd dataSets) taps'
 
       getTapDS :: Tap a -> [DataSet]
       getTapDS t = mapMaybe (flip M.lookup dsIx) (location t)

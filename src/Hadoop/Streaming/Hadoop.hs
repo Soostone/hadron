@@ -125,11 +125,12 @@ data HadoopRunOpts = HadoopRunOpts {
     , mrsOutSep    :: Maybe Char
     -- ^ A separator to be used in reduce output. It is sometimes
     -- useful to specify one to trick Hadoop.
+    , mrsJobName   :: Maybe String
     }
 
 
 instance Default HadoopRunOpts where
-    def = HadoopRunOpts [] "" def Nothing Nothing Nothing Nothing
+    def = HadoopRunOpts [] "" def Nothing Nothing Nothing Nothing Nothing
 
 -- | A simple starting point to defining 'HadoopRunOpts'
 mrSettings
@@ -176,18 +177,24 @@ launchMapReduce HadoopEnv{..} mrKey runToken HadoopRunOpts{..} = do
     case code of
       ExitSuccess -> return ()
       e -> do
-        lift $ $(logError) $ T.intercalate "\n" ["Hadoop job failed.", "StdOut:", T.pack out, "", "StdErr:", T.pack eout]
+        lift $ $(logError) $ T.intercalate "\n"
+          [ "Hadoop job failed.", "StdOut:"
+          , T.pack out, "", "StdErr:", T.pack eout]
         hoistEither $ Left $ "MR job failed with: " ++ show e
     where
       mkArgs exec prog =
             [ "jar", hsJar] ++
-            comp ++ numMap ++ numRed ++ part ++ outSep ++
+            comp ++ numMap ++ numRed ++ part ++ outSep ++ jobName ++
             inputs ++
             [ "-output", mrsOutput
-            , "-mapper", "\"" ++ prog ++ " " ++ runToken ++ " map_" ++ mrKey ++ "\""
-            , "-reducer", "\"" ++ prog ++ " " ++ runToken ++ " reduce_" ++ mrKey ++ "\""
+            , "-mapper", "\"" ++ prog ++ " " ++ runToken ++
+                " map_" ++ mrKey ++ "\""
+            , "-reducer", "\"" ++ prog ++ " " ++ runToken ++
+                " reduce_" ++ mrKey ++ "\""
             , "-file", exec
             ]
+
+      jobName = maybe [] (\nm -> ["-D", "mapred.job.name='", nm, "'"]) mrsJobName
 
       inputs = concatMap mkInput mrsInput
       mkInput i = ["-input", i]
