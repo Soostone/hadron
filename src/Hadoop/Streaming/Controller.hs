@@ -95,8 +95,6 @@ module Hadoop.Streaming.Controller
     , JoinType (..)
     , JoinKey
 
-    -- , E (..)
-    -- , isL, isR
     , mergeTaps
 
     -- * Data Serialization Utilities
@@ -749,14 +747,6 @@ joinStep fs = MapReduce mro pSerialize mp rd
       rd =  joinReducer fs'
 
 
-
-
--- data E a b = L a | R b deriving (Eq,Show,Read,Ord)
-
--- isL L{} = True
--- isL R{} = False
-
--- isR = not . isL
 
 
 -------------------------------------------------------------------------------
