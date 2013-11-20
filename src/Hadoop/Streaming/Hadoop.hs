@@ -184,7 +184,8 @@ launchMapReduce HadoopEnv{..} mrKey runToken HadoopRunOpts{..} = do
     where
       mkArgs exec prog =
             [ "jar", hsJar] ++
-            comp ++ numMap ++ numRed ++ part ++ outSep ++ jobName ++
+            comp ++ numMap ++ numRed ++ outSep ++ jobName ++
+            part ++
             inputs ++
             [ "-output", mrsOutput
             , "-mapper", "\"" ++ prog ++ " " ++ runToken ++
