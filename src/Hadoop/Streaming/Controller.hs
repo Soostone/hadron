@@ -550,6 +550,7 @@ orchestrate (Controller p) settings rr s = evalStateT (runEitherT (go p)) s
               runToken <- liftIO $ (mkRNG >>= randomToken 64) <&> B.unpack
               let fn = tmpRoot <> runToken
               st <- use csMRVars
+              liftIO $ createDirectoryIfMissing True tmpRoot
               liftIO $ writeFile fn (show st)
               liftIO $ hdfsPut settings fn fn
 
