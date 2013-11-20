@@ -769,6 +769,10 @@ joinStep fs = MapReduce mro pSerialize mp rd
 
 -------------------------------------------------------------------------------
 -- | Combine two taps intelligently into the Either sum type.
+--
+-- Matches on the prefix path given as part of each tap. It would
+-- therefore fail to work properly on self joins where the same data
+-- location is used in both taps.
 mergeTaps :: Tap a -> Tap b -> Tap (Either a b)
 mergeTaps ta tb = Tap (location ta ++ location tb) newP
     where
