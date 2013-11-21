@@ -23,6 +23,7 @@ module Hadoop.Streaming.Hadoop
 
     , PartitionStrategy (..)
     , numSegs
+    , eqSegs
 
     , HadoopRunOpts (..)
     , mrSettings
@@ -110,9 +111,17 @@ data PartitionStrategy
 instance Default PartitionStrategy where
     def = NoPartition
 
+
+-------------------------------------------------------------------------------
+-- | Number of total key segments.
 numSegs NoPartition = 1
 numSegs Partition{..} = keySegs
 
+-------------------------------------------------------------------------------
+-- | Number of key segments that constitute input object equality, for
+-- hadoop partitions.
+eqSegs NoPartition = 1
+eqSegs Partition{..} = partSegs
 
 
 data HadoopRunOpts = HadoopRunOpts {

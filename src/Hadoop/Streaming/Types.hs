@@ -47,10 +47,7 @@ type Reducer k a r  = Conduit (k, a) IO r
 -------------------------------------------------------------------------------
 -- | Options for a single-step MR job.
 data MROptions = MROptions {
-      _mroEq        :: (CompositeKey -> CompositeKey -> Bool)
-    -- ^ An equivalence test for incoming keys. True means given two
-    -- keys are part of the same reduce series.
-    , _mroPart      :: PartitionStrategy
+      _mroPart      :: PartitionStrategy
     -- ^ Number of segments to expect in incoming keys. Affects both
     -- hadron program's understanding of key AND Hadoop's distribution
     -- of map output to reducers.
@@ -77,7 +74,7 @@ data MROptions = MROptions {
 makeLenses '' MROptions
 
 instance Default MROptions where
-    def = MROptions (==) NoPartition Nothing Nothing Nothing Nothing
+    def = MROptions NoPartition Nothing Nothing Nothing Nothing
 
 
 -------------------------------------------------------------------------------

@@ -155,10 +155,8 @@ mapper f = do
     liftIO $ hSetBuffering stdout LineBuffering
     liftIO $ hSetBuffering stdin LineBuffering
     sourceHandle stdin $=
-      -- performEvery every inLog $=
       f $=
       C.map conv $=
-      -- performEvery every outLog $=
       builderToByteString $$
       sinkHandle stdout
     where
@@ -170,12 +168,7 @@ mapper f = do
 
       tab = fromByteString "\t"
       nl = fromByteString "\n"
-      every = 1
 
-      inLog _ = liftIO $ hsEmitCounter "Map input chunks" every
-      outLog _ = do
-        liftIO $ hsEmitCounter "Map emitted rows" every
-        -- liftIO $ hsEmitCounter (B.concat ["Map emitted: ", fn]) every
 
 
 
@@ -230,27 +223,18 @@ reducer MROptions{..} mrInPrism f = do
             Just x@(k,_) ->
               case cur of
                 Just curKey -> do
-                  case _mroEq curKey k of
+                  let n = eqSegs _mroPart
+                  case take n curKey == take n k of
                     True -> yield x >> sameKey cur
                     False -> leftover x
                 Nothing -> do
                   yield x
                   sameKey (Just k)
 
-
-      logIn _ = liftIO $ hsEmitCounter "Reducer processed rows" every
-      logConv _ = liftIO $ hsEmitCounter "Reducer deserialized objects" every
-      logOut _ = liftIO $ hsEmitCounter "Reducer emitted rows" every
-
-      every = 1
-
       stream = sourceHandle stdin =$=
                lineC (numSegs _mroPart) =$=
-               -- performEvery every logIn =$=
                C.mapMaybe (_2 (firstOf mrInPrism)) =$=
-               -- performEvery every logConv =$=
                go2
-               -- performEvery every logOut
 
 
 

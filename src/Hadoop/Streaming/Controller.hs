@@ -69,7 +69,6 @@ module Hadoop.Streaming.Controller
 
     -- * Settings for MapReduce Jobs
     , MROptions
-    , mroEq
     , mroPart
     , mroNumMap
     , mroNumReduce
@@ -896,13 +895,27 @@ joinMR
     => Conduit (Either a b) IO (k, Either v v)
     -- ^ Mapper for the input
     -> MapReduce (Either a b) v
-joinMR mp = MapReduce mro pSerialize mp red
+joinMR mp = MapReduce mro pSerialize mp' (go [])
     where
-      mro = def { _mroPart = Partition n n }
+      mro = def { _mroPart = Partition (n+1) n }
       n = numKeys (undefined :: k)
 
-      red = do
-          xs <- C.consume <&> map snd
-          let (ls, rs) = partition isLeft xs & over (both.traverse) (view chosen)
-          mapM_ yield [mappend a b | a <- ls, b <- rs]
+      -- add to key so we know for sure all Lefts arrive before
+      -- Rights.
+
+      mp' :: Conduit (Either a b) IO (CompositeKey, Either v v)
+      mp' = mp =$= C.map modMap
+
+      modMap (k, Left v) = (toCompKey k ++ ["1"], Left v)
+      modMap (k, Right v) = (toCompKey k ++ ["2"], Right v)
+
+      -- cache lefts, start emitting upon seeing the first right.
+      go ls = do
+          inc <- await
+          case inc of
+            Nothing -> return ()
+            Just (_, Left r) -> go $! (r:ls)
+            Just (_, Right b) -> do
+              mapM_ yield [mappend a b | a <- ls]
+              go ls
 

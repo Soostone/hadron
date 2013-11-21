@@ -25,7 +25,6 @@ module Hadoop.Streaming.Join
 
 -------------------------------------------------------------------------------
 import           Control.Lens
-import           Control.Monad.Trans
 import qualified Data.ByteString.Char8 as B
 import           Data.Conduit
 import qualified Data.Conduit.List     as C
@@ -113,9 +112,7 @@ emitStream _ _ = error "emitStream can't be called unless it's in Streaming mode
 
 -------------------------------------------------------------------------------
 joinOpts :: MROptions
-joinOpts = def { _mroEq = eq, _mroPart = (Partition 2 1) }
-    where
-      eq as bs = init as == init bs
+joinOpts = def { _mroPart = (Partition 2 1) }
 
 
 -------------------------------------------------------------------------------
@@ -211,16 +208,8 @@ joinMapper
 joinMapper getDS mkMap = do
     fi <- getFileName
     let ds = getDS fi
-    -- performEvery every (inLog ds) =$=
-    mkMap ds =$=
-      -- performEvery every (outLog ds) =$=
-      C.map (go ds)
+    mkMap ds =$= C.map (go ds)
   where
-    inLog ds _ = liftIO $ hsEmitCounter
-                 (B.concat ["Map input dataset: ", getDataSet ds]) every
-    outLog ds _ = liftIO $ hsEmitCounter
-                  (B.concat ["Map emit dataset: ", getDataSet ds]) every
-    every = 1
     go ds (jk, a) = (jk ++ [getDataSet ds], a)
 
 
