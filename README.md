@@ -8,19 +8,24 @@ compley and delicate world of Hadoop Streaming MapReduce.
 * Ties into Hadoop via the Streaming interface
 
 * Orchestrates multi-step Hadoop jobs so you don't have to manually
-  call Hadoop *at all*.
+  call Hadoop at all.
 
 * Provides typed interactions with your input/output data on hdfs, s3
   or any other system that Hadoop supports.
 
 * Every Map-Reduce step is fully typed both on input and output,
-  making a long, sophisticated sequence of jobs much easier to reason
-  with.
+  making a long, sophisticated sequence of jobs much easier to design
+  and maintain.
 
-* Built-in support for JOINs mapper-side. Disparate data sources are
-  each mapped to a common, monoidal type which then get `mconcat`ed
-  during reduce by join key. We support both required (a-la inner) and
-  optional (a-la outer) joins.
+* Built-in support for multi-way map-side joins. Disparate data
+  sources are each mapped to a common, monoidal type which then gets
+  `mconcat`ed during reduce by join key. We support both required
+  (a-la inner) and optional (a-la outer) joins. Current shortcoming
+  here is the loss of input typing; only Tap ByteString can be used on
+  input in order to support multiple datasets.
+  
+* Various convenience combinators in the Controller module, covering
+  the most common tasks.
   
   
 ## Shortcomings and Issues
@@ -34,6 +39,11 @@ you are running.
 This library has been most commonly tested on Amazon's EMR offering
 and Cloudera's local demo VM.
 
+## Status
+
+hadron is used extensively by Soostone to process datasets with rows
+in the billions. Improvement opportunities exist, but it is very much
+functional.
 
 ## Modules
 
@@ -54,6 +64,20 @@ jobs.
 
 ## TODO
 
+  - Allow specifying per-task re-run strategy (instead of global
+    setting)
+  
+  - Re-think the Controller design to enable:
+    - Parallel execution of non-dependent computation paths, like the
+      cabal parallel build graph
+    - Ability to chain-design MapReduce tasks before it's time to
+      supply them with Taps via connect
+    
+  - Probably rename Hadoop.Streaming.Controller to Hadron.
+
+  - Is there an easier way to express strongly typed multi-way joins
+    instead of the current best of "Tap (Either (Either a b) c)"?
+
   - Escape newlines instead of all-out Base64 encoding in internal
     binary protocol (i.e. emit 0xff 0x0a for newline, and 0xff 0xff
     for 0xff). (gregorycollins)
@@ -61,20 +85,13 @@ jobs.
   - Hand-roll a parseLine function break on newlines and tab
     characters using elemIndex. (gregorycollins)
 
-  - Add a `loadTap` function to support loading small files directly
-    into memory, as opposed to a full-blown join. bytestring-mmap?
-
   - Make launchHadoop logging real-time
-
-  - Make and expose some common MROptions
 
   - Make a better CLI interface that can specify common hadoop
     settings (e.g. EMR vs. Cloudera)
 
   - Use MVector buffering with mutable growth (like in palgos) in
     joins instead of linked lists
-
-  - Add built-in/common reducers, mappers, etc.
 
   - Make a local orchestrate function for a non-hadoop, single-machine
     backend via 'sort'?
