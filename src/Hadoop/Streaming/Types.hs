@@ -47,17 +47,18 @@ type Reducer k a r  = Conduit (k, a) IO r
 -------------------------------------------------------------------------------
 -- | Options for a single-step MR job.
 data MROptions = MROptions {
-      _mroPart      :: PartitionStrategy
+      _mroPart       :: PartitionStrategy
     -- ^ Number of segments to expect in incoming keys. Affects both
     -- hadron program's understanding of key AND Hadoop's distribution
     -- of map output to reducers.
-    , _mroNumMap    :: Maybe Int
+    , _mroComparator :: Comparator
+    , _mroNumMap     :: Maybe Int
     -- ^ Number of map tasks; 'Nothing' leaves it to Hadoop to decide.
-    , _mroNumReduce :: Maybe Int
+    , _mroNumReduce  :: Maybe Int
     -- ^ Number of reduce tasks; 'Nothing' leaves it to Hadoop to decide.
-    , _mroCompress  :: Maybe String
+    , _mroCompress   :: Maybe String
     -- ^ Whether to use compression on reduce output.
-    , _mroOutSep    :: Maybe Char
+    , _mroOutSep     :: Maybe Char
     -- ^ Separator to be communicated to Hadoop for the reduce output.
     -- Sets both the 'stream.reduce.output.field.separator' and
     -- 'mapred.textoutputformat.separator' parameters. Sometimes
@@ -74,7 +75,7 @@ data MROptions = MROptions {
 makeLenses '' MROptions
 
 instance Default MROptions where
-    def = MROptions NoPartition Nothing Nothing Nothing Nothing
+    def = MROptions NoPartition RegularComp Nothing Nothing Nothing Nothing
 
 
 -------------------------------------------------------------------------------
@@ -84,5 +85,6 @@ mrOptsToRunOpts MROptions{..} = def { mrsPart = _mroPart
                                     , mrsNumMap = _mroNumMap
                                     , mrsNumReduce = _mroNumReduce
                                     , mrsCompress = _mroCompress
-                                    , mrsOutSep = _mroOutSep }
+                                    , mrsOutSep = _mroOutSep
+                                    , mrsComparator = _mroComparator }
 

@@ -24,6 +24,7 @@ module Hadoop.Streaming.Hadoop
     , PartitionStrategy (..)
     , numSegs
     , eqSegs
+    , Comparator (..)
 
     , HadoopRunOpts (..)
     , mrSettings
@@ -108,8 +109,17 @@ data PartitionStrategy
       }
     -- ^ Expect a composite key emitted form the 'Mapper'.
 
-instance Default PartitionStrategy where
-    def = NoPartition
+
+instance Default PartitionStrategy where def = NoPartition
+
+
+data Comparator
+    = RegularComp
+    -- ^ Regular sorting
+    | NumericComp Int Int Bool
+    -- ^ Numeric sorting spoanning fields i to j, True=reversed
+
+instance Default Comparator where def = RegularComp
 
 
 -------------------------------------------------------------------------------
@@ -125,21 +135,22 @@ eqSegs Partition{..} = partSegs
 
 
 data HadoopRunOpts = HadoopRunOpts {
-      mrsInput     :: [String]
-    , mrsOutput    :: String
-    , mrsPart      :: PartitionStrategy
-    , mrsNumMap    :: Maybe Int
-    , mrsNumReduce :: Maybe Int
-    , mrsCompress  :: Maybe String
-    , mrsOutSep    :: Maybe Char
+      mrsInput      :: [String]
+    , mrsOutput     :: String
+    , mrsPart       :: PartitionStrategy
+    , mrsNumMap     :: Maybe Int
+    , mrsNumReduce  :: Maybe Int
+    , mrsCompress   :: Maybe String
+    , mrsOutSep     :: Maybe Char
     -- ^ A separator to be used in reduce output. It is sometimes
     -- useful to specify one to trick Hadoop.
-    , mrsJobName   :: Maybe String
+    , mrsJobName    :: Maybe String
+    , mrsComparator :: Comparator
     }
 
 
 instance Default HadoopRunOpts where
-    def = HadoopRunOpts [] "" def Nothing Nothing Nothing Nothing Nothing
+    def = HadoopRunOpts [] "" def Nothing Nothing Nothing Nothing Nothing def
 
 -- | A simple starting point to defining 'HadoopRunOpts'
 mrSettings
@@ -194,7 +205,7 @@ launchMapReduce HadoopEnv{..} mrKey runToken HadoopRunOpts{..} = do
       mkArgs exec prog =
             [ "jar", hsJar] ++
             comp ++ numMap ++ numRed ++ outSep ++ jobName ++
-            part ++
+            comparator ++ part ++
             inputs ++
             [ "-output", mrsOutput
             , "-mapper", "\"" ++ prog ++ " " ++ runToken ++
@@ -229,6 +240,16 @@ launchMapReduce HadoopEnv{..} mrKey runToken HadoopRunOpts{..} = do
                  , "-D", "mapred.text.key.partitioner.options=-k1," ++ show partSegs
                  , "-partitioner", "org.apache.hadoop.mapred.lib.KeyFieldBasedPartitioner"
                  ]
+
+
+      comparator = case mrsComparator of
+                     RegularComp -> []
+                     NumericComp st end rev ->
+                       [ "-D", "mapred.output.key.comparator.class=org.apache.hadoop.mapred.lib.KeyFieldBasedComparator"
+                       , "-D", "mapred.text.key.comparator.options=-k" <>
+                               show st <> "," <> show end <> "n" <>
+                               if rev then "r" else ""
+                       ]
 
       outSep = case mrsOutSep of
                  Nothing -> []

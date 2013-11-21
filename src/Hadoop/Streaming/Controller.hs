@@ -77,6 +77,7 @@ module Hadoop.Streaming.Controller
     , gzipCodec
     , snappyCodec
     , PartitionStrategy (..)
+    , Comparator (..)
     , RerunStrategy (..)
 
     -- * Hadoop Utilities
