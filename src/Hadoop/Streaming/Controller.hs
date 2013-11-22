@@ -827,8 +827,6 @@ mapReduce mp rd a0 = MapReduce mro pSerialize m r
           return (Just k, b)
 
 
-
-
 -------------------------------------------------------------------------------
 -- | Deduplicate input objects that have the same key value; the first
 -- object seen for each key will be kept.
@@ -851,16 +849,16 @@ firstBy f = mapReduce mp rd Nothing >.> (C.map snd =$= C.catMaybes)
 
 -------------------------------------------------------------------------------
 -- | A generic map-only MR step.
-mapMR :: (Serialize v) => (v -> b) -> MapReduce v b
+mapMR :: (Serialize b) => (v -> IO [b]) -> MapReduce v b
 mapMR f = MapReduce def pSerialize mp rd
     where
       mp = do
           rng <- liftIO mkRNG
-          let send a = do
-                  t <- liftIO $ randomToken 2 rng
-                  return (t, a)
-          C.mapM send
-      rd = C.map (f . snd)
+          awaitForever $ \ a -> do
+              t <- liftIO $ randomToken 2 rng
+              res <- liftIO $ f a
+              mapM_ (\x -> yield (t, x)) res
+      rd = C.map snd
 
 
 -------------------------------------------------------------------------------
