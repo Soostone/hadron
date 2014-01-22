@@ -17,7 +17,7 @@
 
 -----------------------------------------------------------------------------
 -- |
--- Module      :  Hadoop.Streaming.Controller
+-- Module      :  Hadron.Controller
 -- Copyright   :  Soostone Inc
 -- License     :  BSD3
 --
@@ -29,7 +29,7 @@
 -- data locations.
 ----------------------------------------------------------------------------
 
-module Hadoop.Streaming.Controller
+module Hadron.Controller
     (
 
 
@@ -104,7 +104,7 @@ module Hadoop.Streaming.Controller
     , joinMR
 
     -- * Data Serialization Utilities
-    , module Hadoop.Streaming.Protocol
+    , module Hadron.Protocol
 
     ) where
 
@@ -136,12 +136,12 @@ import           System.Environment
 import           System.FilePath
 import           System.IO
 -------------------------------------------------------------------------------
-import           Hadoop.Streaming          hiding (mapReduce)
-import           Hadoop.Streaming.Hadoop
-import           Hadoop.Streaming.Join
-import           Hadoop.Streaming.Logger
-import           Hadoop.Streaming.Protocol
-import           Hadoop.Streaming.Types
+import           Hadron.Basic              hiding (mapReduce)
+import           Hadron.Hadoop
+import           Hadron.Join
+import           Hadron.Logger
+import           Hadron.Protocol
+import           Hadron.Types
 -------------------------------------------------------------------------------
 
 

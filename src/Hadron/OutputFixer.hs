@@ -6,7 +6,7 @@ import           Data.Conduit.Binary
 import           Data.Conduit.List
 import           System.IO
 -------------------------------------------------------------------------------
-import           Hadoop.Streaming
+import           Hadron
 -------------------------------------------------------------------------------
 
 

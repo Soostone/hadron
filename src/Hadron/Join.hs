@@ -4,7 +4,7 @@
 {-# LANGUAGE RankNTypes                 #-}
 {-# LANGUAGE RecordWildCards            #-}
 
-module Hadoop.Streaming.Join
+module Hadron.Join
     (
 
       DataDefs
@@ -39,7 +39,7 @@ import           Data.String
 import qualified Data.Vector           as V
 import           GHC.Generics
 -------------------------------------------------------------------------------
-import           Hadoop.Streaming
+import           Hadron.Basic
 -------------------------------------------------------------------------------
 
 

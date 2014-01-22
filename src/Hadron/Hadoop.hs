@@ -5,7 +5,7 @@
 
 -----------------------------------------------------------------------------
 -- |
--- Module      :  Hadoop.Streaming.Hadoop
+-- Module      :  Hadron.Hadoop
 -- Copyright   :  Soostone Inc
 -- License     :  BSD3
 --
@@ -16,7 +16,7 @@
 ----------------------------------------------------------------------------
 
 
-module Hadoop.Streaming.Hadoop
+module Hadron.Hadoop
     ( HadoopEnv (..)
     , clouderaDemo
     , amazonEMR

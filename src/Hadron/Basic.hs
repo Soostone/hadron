@@ -9,7 +9,7 @@
 
 -----------------------------------------------------------------------------
 -- |
--- Module      :  Hadoop.Streaming
+-- Module      :  Hadron
 -- Copyright   :  Soostone Inc
 -- License     :  BSD3
 --
@@ -23,7 +23,7 @@
 -- output.
 ----------------------------------------------------------------------------
 
-module Hadoop.Streaming
+module Hadron.Basic
     (
       -- * Types
       Key
@@ -51,7 +51,7 @@ module Hadoop.Streaming
     , reducerMain
 
     -- * Data Serialization Utilities
-    , module Hadoop.Streaming.Protocol
+    , module Hadron.Protocol
 
     ) where
 
@@ -76,9 +76,9 @@ import           Prelude                    hiding (id, (.))
 import           System.Environment
 import           System.IO
 -------------------------------------------------------------------------------
-import           Hadoop.Streaming.Hadoop
-import           Hadoop.Streaming.Protocol
-import           Hadoop.Streaming.Types
+import           Hadron.Hadoop
+import           Hadron.Protocol
+import           Hadron.Types
 -------------------------------------------------------------------------------
 
 
@@ -286,8 +286,8 @@ mapReduceMain mro mrInPrism f g = liftIO (execParser opts) >>= run
 
     opts = info (helper <*> commandParse)
       ( fullDesc
-      <> progDesc "This is a Hadoop Streaming Map/Reduce binary. "
-      <> header "hadron - use Haskell for Hadoop Streaming."
+      <> progDesc "This is a Hadron Map/Reduce binary. "
+      <> header "hadron - use Haskell for Hadron."
       )
 
 

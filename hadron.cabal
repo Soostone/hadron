@@ -1,5 +1,5 @@
 name:                hadron
-version:             0.2.3
+version:             0.3
 description:         Use Haskell programs for data processing with Hadoop
 license:             BSD3
 license-file:        LICENSE
@@ -13,13 +13,13 @@ library
   hs-source-dirs:      src
 
   exposed-modules:     
-    Hadoop.Streaming
-    Hadoop.Streaming.Join
-    Hadoop.Streaming.Hadoop
-    Hadoop.Streaming.Controller
-    Hadoop.Streaming.Logger
-    Hadoop.Streaming.Protocol
-    Hadoop.Streaming.Types
+    Hadron.Basic
+    Hadron.Join
+    Hadron.Hadoop
+    Hadron.Controller
+    Hadron.Logger
+    Hadron.Protocol
+    Hadron.Types
 
   build-depends:       
      attoparsec,
@@ -37,11 +37,12 @@ library
      directory,
      errors,
      mmorph,
-     fast-logger,
+     fast-logger >= 0.2 && < 0.2.1,
+     monad-logger >= 0.3 && <= 0.3.2.0,
+     unix-time >= 0.1.10 && < 0.2,
      filepath,
      hashable,
      lens, 
-     monad-logger,
      mtl,
      operational,
      optparse-applicative,

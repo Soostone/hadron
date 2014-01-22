@@ -1,8 +1,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
 
-module Hadoop.Streaming.Logger
-    ( module Hadoop.Streaming.Logger
+module Hadron.Logger
+    ( module Hadron.Logger
     , module Control.Monad.Logger
     ) where
 

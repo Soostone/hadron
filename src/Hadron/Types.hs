@@ -3,15 +3,15 @@
 {-# LANGUAGE RecordWildCards   #-}
 {-# LANGUAGE TemplateHaskell   #-}
 
-module Hadoop.Streaming.Types where
+module Hadron.Types where
 
 -------------------------------------------------------------------------------
 import           Control.Lens
-import qualified Data.ByteString.Char8   as B
+import qualified Data.ByteString.Char8 as B
 import           Data.Conduit
 import           Data.Default
 -------------------------------------------------------------------------------
-import           Hadoop.Streaming.Hadoop
+import           Hadron.Hadoop
 -------------------------------------------------------------------------------
 
 type Key = B.ByteString

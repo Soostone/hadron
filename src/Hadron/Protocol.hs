@@ -2,7 +2,7 @@
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE RankNTypes            #-}
 
-module Hadoop.Streaming.Protocol
+module Hadron.Protocol
     (
       Protocol (..)
     , Protocol'
@@ -54,7 +54,7 @@ import qualified Data.Serialize                   as Ser
 import           Prelude                          hiding (id, (.))
 import           Safe
 -------------------------------------------------------------------------------
-import           Hadoop.Streaming.Types
+import           Hadron.Types
 -------------------------------------------------------------------------------
 
 

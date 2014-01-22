@@ -1,6 +1,6 @@
 {-# LANGUAGE BangPatterns #-}
 
-module Hadoop.Streaming.Utils where
+module Hadron.Utils where
 
 
 -------------------------------------------------------------------------------
