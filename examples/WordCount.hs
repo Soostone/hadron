@@ -1,32 +1,32 @@
 {-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE OverloadedStrings         #-}
-{-# LANGUAGE ScopedTypeVariables       #-}
+{-# LANGUAGE TupleSections             #-}
 
 module Main where
 
 -------------------------------------------------------------------------------
-import           Control.Exception
 import qualified Data.ByteString.Char8 as B
 import           Data.Conduit
 import qualified Data.Conduit.List     as C
+import           Data.CSV.Conduit
 import           Data.Default
 -------------------------------------------------------------------------------
-import           Hadoop.Streaming
+import           Hadron.Basic
 -------------------------------------------------------------------------------
-
-
-
-mro = MROptions (==) def pSerialize
 
 
 main :: IO ()
-main = mapReduceMain mro mapper' reducer'
+main = mapReduceMain def pSerialize mapper' reducer'
 
-mapper' = linesConduit =$= C.map (\_ -> (["cnt"], (1 :: Int)))
+mapper':: Mapper B.ByteString CompositeKey Int
+mapper' = linesConduit =$= C.concatMap f
+    where
+      f ln = map (\w -> ([w], 1 :: Int)) $ B.words ln
 
+reducer':: Reducer CompositeKey Int B.ByteString
 reducer' = do
-  i <- C.fold (\ acc (_, x) -> x + acc) 0
-  yield $ B.pack $ show i
+  (w, cnt) <- C.fold (\ (_, cnt) ([k], x) -> (k, cnt + x)) ("", 0)
+  yield $ B.concat [rowToStr def [w, B.pack . show $ cnt], "\n"]
 
 
 

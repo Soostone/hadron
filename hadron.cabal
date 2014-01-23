@@ -55,7 +55,6 @@ library
      unordered-containers,
      vector,
      zlib-conduit,
-     directory,
      lcs,
      stringsearch,
      async

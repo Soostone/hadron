@@ -1,6 +1,11 @@
 {-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE OverloadedStrings         #-}
-{-# LANGUAGE TupleSections             #-}
+{-# LANGUAGE ScopedTypeVariables       #-}
+{-| 
+
+Use the Basic interface to create a simple mapreduce program.
+
+-}
 
 module Main where
 
@@ -8,24 +13,21 @@ module Main where
 import qualified Data.ByteString.Char8 as B
 import           Data.Conduit
 import qualified Data.Conduit.List     as C
-import           Data.CSV.Conduit
 import           Data.Default
 -------------------------------------------------------------------------------
-import           Hadoop.Streaming
+import           Hadron.Basic
 -------------------------------------------------------------------------------
+
 
 
 main :: IO ()
-main = mapReduceMain defMRO mapper' reducer'
+main = mapReduceMain def pSerialize mapper' reducer'
 
-mapper' = linesConduit =$= C.concatMap f
-    where
-      f ln = map (\w -> ([w], 1)) $ B.words ln
+mapper' = linesConduit =$= C.map (\_ -> (["cnt"], (1 :: Int)))
 
-reducer' :: Monad m => Reducer Int m B.ByteString
 reducer' = do
-  (w, cnt) <- C.fold (\ (_, cnt) ([k], x) -> (k, cnt + x)) ("", 0)
-  yield $ B.concat [rowToStr def [w, B.pack . show $ cnt], "\n"]
+  i <- C.fold (\ acc (_, x) -> x + acc) 0
+  yield $ B.pack $ show i
 
 
 

@@ -16,8 +16,8 @@ import           Test.SmallCheck                     hiding (over)
 import           Test.SmallCheck.Drivers
 import           Test.SmallCheck.Series
 -------------------------------------------------------------------------------
-import           Hadoop.Streaming
-import           Hadoop.Streaming.Join
+import           Hadron.Basic
+import           Hadron.Join
 -------------------------------------------------------------------------------
 
 

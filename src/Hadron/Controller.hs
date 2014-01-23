@@ -90,18 +90,17 @@ module Hadron.Controller
     -- * Logging Related
     , logTo
 
-
     -- * MapReduce Combinators
-
-    , joinStep
-    , JoinType (..)
-    , JoinKey
 
     , mapReduce
     , firstBy
     , mapMR
     , oneSnap
     , joinMR
+
+    , joinStep
+    , JoinType (..)
+    , JoinKey
 
     -- * Data Serialization Utilities
     , module Hadron.Protocol
@@ -706,6 +705,9 @@ hadoopMain c@(Controller p) hs rr = logTo stdout $ do
 -- into a single data type. All you need to supply is the map
 -- operation for each tap, the reduce step is assumed to be the
 -- Monoidal 'mconcat'.
+--
+-- 'joinMR' is probably easier to use if you can get by with an inner
+-- join.
 joinStep
     :: forall k b a.
        (Show b, Monoid b, Serialize b,
@@ -889,6 +891,12 @@ oneSnap s3fp f = do
 -------------------------------------------------------------------------------
 -- | Monoidal inner (map-side) join for two types. Each type is mapped
 -- into the common monoid, which is then collapsed during reduce.
+--
+-- Make sure an incoming 'Left' stays 'Left' and a 'Right' stays a
+-- 'Right'.
+--
+-- TODO: Wrap around this with a better API so the user doesn't have
+-- to care.
 joinMR
     :: forall a b k v. (MRKey k, Monoid v, Serialize v)
     => Conduit (Either a b) IO (k, Either v v)
