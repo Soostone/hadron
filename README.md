@@ -47,22 +47,30 @@ functional.
 
 ## Modules
 
-### Hadoop.Streaming
+### Hadron.Basic
 
 This module exposes low level functionality for constructing a single
-MapReduce step. Not recommended for direct use in most scenarios.
+MapReduce step. Not recommended for direct use in most cases.
 
-(More docs and examples to be added)
 
-### Hadoop.Streaming.Controller
+### Hadron.Controller
 
 High level module for automated orchestration of multi-stage MapReduce
 jobs. 
 
 (More docs and examples to be added)
 
+### Hadron.Protocol
+
+Defines data encode/decode strategies via the Protocol type.
+
+
 
 ## TODO
+
+  - Consider switching out of CSV into pipes or io-streams. Conduit
+    ecosystem is pretty wide though, which makes this a bit
+    impractical ATM.
 
   - Allow specifying per-task re-run strategy (instead of global
     setting)
@@ -71,12 +79,13 @@ jobs.
     - Parallel execution of non-dependent computation paths, like the
       cabal parallel build graph
     - Ability to chain-design MapReduce tasks before it's time to
-      supply them with Taps via connect
+      supply them with Taps via connect. In other words, allow
+      MapReduce composition *outside* of the Controller monad.
     
-  - Probably rename Hadoop.Streaming.Controller to Hadron.
-
   - Is there an easier way to express strongly typed multi-way joins
     instead of the current best of "Tap (Either (Either a b) c)"?
+    - Current Best Idea: Use Fundeps to convert a :+ sum type to (,,,)
+      product type via merge. (To be further explored)
 
   - Escape newlines instead of all-out Base64 encoding in internal
     binary protocol (i.e. emit 0xff 0x0a for newline, and 0xff 0xff
