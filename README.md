@@ -1,4 +1,4 @@
-# Hadron - Hadoop MapReduce in Haskell
+# Hadron - Hadoop MapReduce in Haskell [![Build Status](https://travis-ci.org/Soostone/hadron.svg?branch=master)](https://travis-ci.org/Soostone/hadron)
 
 Hadron aims to bring Haskell's type-safety to construction of
 compley and delicate world of Hadoop Streaming MapReduce.
