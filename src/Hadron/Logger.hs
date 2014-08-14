@@ -3,81 +3,83 @@
 
 module Hadron.Logger
     ( module Hadron.Logger
-    , module Control.Monad.Logger
+    , module System.Log.Logger
     ) where
+
 
 -------------------------------------------------------------------------------
 import           Control.Concurrent
-import           Control.Monad.Logger
 import           Control.Monad.Trans
 import           Data.List
 import           Data.Maybe
 import qualified Data.Text                  as T
 import           Language.Haskell.TH.Syntax (Loc (..))
-import           System.Environment
 import           System.IO
-import           System.Log.FastLogger
-import           System.Posix.Process
+import           System.Log.Formatter
+import           System.Log.Handler         (setFormatter)
+import           System.Log.Handler.Simple
+import           System.Log.Handler.Syslog
+import           System.Log.Logger
 -------------------------------------------------------------------------------
 
 
-instance ToLogStr LogStr where
-    toLogStr = id
+
+-------------------------------------------------------------------------------
+-- | Setup given handler for logging under given logger name.
+setLogHandle :: String -> Handle -> Priority -> IO ()
+setLogHandle logNm h lvl = do
+    lh <- streamHandler h lvl >>= \ lh ->
+         return (setFormatter lh (simpleLogFormatter "[$time : $loggername : $prio] $msg"))
+    updateGlobalLogger logNm (setHandlers [lh])
 
 
-logTo :: MonadIO m => Handle -> (LoggingT m a) -> m a
-logTo h m = do
-    le <- mkLogEnv h
-    runLoggingT m (\ loc ls ll str -> withLogger le loc ls ll str)
+-------------------------------------------------------------------------------
+-- | Log everything to system log
+initLogging :: Priority -> IO ()
+initLogging lvl = do
+    lh <- openlog "Hadron" [PID] USER lvl
+    updateGlobalLogger rootLoggerName (setLevel lvl . setHandlers [lh])
 
 
-mkLogEnv :: MonadIO m => Handle -> m LogEnv
-mkLogEnv lh = do
-    logger <- liftIO $ mkLogger True lh
-    pid <- liftIO getProcessID
-    prg <- liftIO getProgName
-    return $ LogEnv (T.pack $ show pid) logger (T.pack prg)
+-------------------------------------------------------------------------------
+enableDebugLog :: IO ()
+enableDebugLog = updateGlobalLogger rootLoggerName (setLevel DEBUG)
 
-
-data LogEnv = LogEnv {
-      leProcessId :: T.Text
-    , leLogger    :: Logger
-    , leProgName  :: T.Text
-    }
 
 
 -- | Use this function to define 'MonadLogger' instances for various
--- monads.
+-- monads in Dyna.
 withLogger
-    :: (Show a, MonadIO m, ToLogStr msg)
-    => LogEnv
+    :: (Show a, MonadIO m)
+    => String
+    -- ^ Logger name
     -> Loc
+    -- ^ Location in file
     -> T.Text
     -> a
-    -> msg
+    -- ^
+    -> String
+    -- ^ A custom message
     -> m ()
-withLogger LogEnv{..} loc ls ll msg  = do
-    tm <- liftIO $ loggerDate leLogger
+withLogger nm loc ls ll msg = do
     tid <- liftIO myThreadId
-    liftIO $ loggerPutStr leLogger $ msg' tm tid
+    liftIO $ infoM nm (msg' tid)
   where
-    msg' tm tid =
-        [ toLogStr tm
-        , toLogStr $ T.pack " - "
-        , toLogStr $ T.concat [leProgName, brackets leProcessId, showTid tid]
-        , toLogStr $ T.pack " - "
-        , toLogStr (drop 5 $ show ll)
-        , toLogStr $ T.pack " - "
-        , toLogStr fileLocStr
-        , toLogStr $ T.pack " - "
-        , toLogStr $ if T.length ls > 0 then T.concat [ls, ": "] else ""
-        , toLogStr msg
-        , toLogStr $ T.pack "\n"]
+    msg' tid = concat
+        [ showTid tid
+        , " - "
+        , (drop 5 $ show ll)
+        , " - "
+        , fileLocStr
+        , " - "
+        , if T.length ls > 0 then concat [T.unpack ls, ": "] else ""
+        , msg
+        , "\n"]
 
     -- taken from file-location package
     -- turn the TH Loc loaction information into a human readable string
     -- leaving out the loc_end parameter
-    fileLocStr = T.pack $
+    fileLocStr =
         "(" ++ (loc_filename loc) ++ ':' : (line loc) ++ ':' : (char loc) ++
         ")"
       where
@@ -88,5 +90,4 @@ withLogger LogEnv{..} loc ls ll msg  = do
     chop x = let y = fromMaybe x $ stripPrefix "ThreadId " x
              in y
 
-    showTid tid = T.pack $ "[" ++ chop (show tid) ++ "]"
-    brackets x = T.concat ["[", x, "]"]
+    showTid tid = "[" ++ chop (show tid) ++ "]"

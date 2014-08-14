@@ -1,5 +1,5 @@
 name:                hadron
-version:             0.3
+version:             0.4
 description:         Use Haskell programs for data processing with Hadoop
 synopsis:            Use Haskell programs for data processing with Hadoop
 license:             BSD3
@@ -23,42 +23,45 @@ library
     Hadron.Types
 
   build-depends:       
+     async,
      attoparsec,
-     attoparsec-conduit >= 1.0,
-     base >= 4.5,
+     attoparsec-conduit           >= 1.0,
+     base                         >= 4.5,
      base64-bytestring,
-     blaze-builder-conduit,
      blaze-builder,
+     blaze-builder-conduit,
      bytestring,
      cereal,
-     conduit >= 1.0,
+     conduit                      >= 1.0,
+     conduit-extra,
      containers,
-     csv-conduit >= 0.5.1  &&   < 0.7,
+     csv-conduit                  >= 0.5.1  &&   < 0.7,
      data-default,
      directory,
      errors,
-     mmorph,
-     fast-logger >= 0.2 && < 0.2.1,
-     monad-logger >= 0.3 && <= 0.3.2.0,
-     unix-time >= 0.1.10 && < 0.2,
+     exceptions,
      filepath,
      hashable,
+     hslogger                     >= 1.2 && < 1.3,
+     lcs,
      lens, 
+     mmorph,
      mtl,
      operational,
      optparse-applicative,
+     primitive,
      process,
      rng-utils,
      safe,
+     stringsearch,
      template-haskell,
      text,
+     transformers-base,
      unix,
+     unix-time,                    
      unordered-containers,
      vector,
-     zlib-conduit,
-     lcs,
-     stringsearch,
-     async
+     zlib-conduit
 
   ghc-options:         -Wall -O2 
                        -fwarn-tabs

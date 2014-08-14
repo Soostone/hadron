@@ -39,6 +39,8 @@ module Hadron.Controller
     , connect
     , connect'
     , io
+    , setVal
+    , getVal
 
     , MapReduce (..)
     , mrOptions
@@ -87,9 +89,6 @@ module Hadron.Controller
     , getFileName
 
 
-    -- * Logging Related
-    , logTo
-
     -- * MapReduce Combinators
 
     , mapReduce
@@ -113,6 +112,7 @@ import           Control.Error
 import           Control.Exception
 import           Control.Exception.Lens
 import           Control.Lens
+import           Control.Monad.Catch
 import           Control.Monad.Morph
 import           Control.Monad.Operational hiding (view)
 import qualified Control.Monad.Operational as O
@@ -133,7 +133,7 @@ import           Data.Text.Encoding
 import           System.Directory
 import           System.Environment
 import           System.FilePath
-import           System.IO
+
 -------------------------------------------------------------------------------
 import           Hadron.Basic              hiding (mapReduce)
 import           Hadron.Hadoop
@@ -270,10 +270,6 @@ data MapReduce a b = forall k v. MRKey k => MapReduce {
     , _mrReducer :: Reducer k v b
     }
 
-
--------------------------------------------------------------------------------
-mrOptions :: Lens' (MapReduce a b) MROptions
-mrOptions f (MapReduce o p m r) = (\ o' -> MapReduce o' p m r) <$> f o
 
 makeLenses ''MapReduce
 
@@ -480,7 +476,7 @@ pickId = do
 -------------------------------------------------------------------------------
 -- | Interpreter for the central job control process
 orchestrate
-    :: (MonadIO m, MonadLogger m)
+    :: (MonadIO m)
     => Controller a
     -> HadoopEnv
     -> RerunStrategy
@@ -493,7 +489,7 @@ orchestrate (Controller p) settings rr s = evalStateT (runEitherT (go p)) s
       eval (Return a) = return a
       eval (i :>>= f) = eval' i >>= go . f
 
-      eval' :: (MonadLogger m, MonadIO m) => ConI a -> EitherT String (StateT ContState m) a
+      eval' :: (MonadIO m) => ConI a -> EitherT String (StateT ContState m) a
 
       eval' (ConIO f) = liftIO f
 
@@ -519,7 +515,7 @@ orchestrate (Controller p) settings rr s = evalStateT (runEitherT (go p)) s
       eval' (SetVal k v) = csMRVars . at k .= Just v
       eval' (GetVal k) = use (csMRVars . at k)
 
-      eval' (Connect mr@(MapReduce mro mrInPrism _ _) inp outp nm) = go'
+      eval' (Connect (MapReduce mro _ _ _) inp outp nm) = go'
           where
             go' = do
                 mrKey <- newMRKey
@@ -529,14 +525,13 @@ orchestrate (Controller p) settings rr s = evalStateT (runEitherT (go p)) s
                   False -> go'' mrKey
                   True ->
                     case rr of
-                      RSFail -> lift $ $(logError) $ T.concat
-                        [ "Destination exists: ", T.pack $ head (location outp)]
-                      RSSkip -> lift $ $(logInfo) $ T.concat
-                        [ "Destination exists. Skipping ", T.intercalate ", " $
-                          map T.pack (location outp)]
+                      RSFail -> liftIO $ errorM "Hadron.Controller" $
+                        "Destination exists: " <> head (location outp)
+                      RSSkip -> liftIO $ infoM "Hadron.Controller" $
+                        "Destination exists. Skipping " <> intercalate ", " (location outp)
                       RSReRun -> do
-                        lift $ $(logInfo) $ T.pack $
-                          "Destination file exists, will delete and rerun: " ++
+                        liftIO $ infoM "Hadron.Controller" $
+                          "Destination file exists, will delete and rerun: " <>
                           head (location outp)
                         _ <- liftIO $ mapM_ (hdfsDeletePath settings) (location outp)
                         go'' mrKey
@@ -597,7 +592,7 @@ hadoopMain
     -> RerunStrategy
     -- ^ What to do if destination files already exist.
     -> m ()
-hadoopMain c@(Controller p) hs rr = logTo stdout $ do
+hadoopMain c@(Controller p) hs rr = do
     args <- liftIO getArgs
     case args of
       [] -> do
@@ -623,7 +618,7 @@ hadoopMain c@(Controller p) hs rr = logTo stdout $ do
           liftIO $ removeFile tmp
 
 
-      go :: String -> String -> ConI b -> StateT ContState (LoggingT m) b
+      go :: String -> String -> ConI b -> StateT ContState m b
 
       go _ _ (ConIO f) = liftIO f
 

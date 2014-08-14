@@ -40,6 +40,7 @@ import           Control.Applicative
 import           Control.Category
 import           Control.Lens
 import           Control.Monad
+import           Control.Monad.Catch
 import           Data.Attoparsec.ByteString.Char8 (Parser, endOfLine, takeTill)
 import qualified Data.ByteString.Base64           as Base64
 import qualified Data.ByteString.Char8            as B

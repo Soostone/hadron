@@ -1,7 +1,8 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RankNTypes        #-}
-{-# LANGUAGE RecordWildCards   #-}
-{-# LANGUAGE TemplateHaskell   #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE OverloadedStrings     #-}
+{-# LANGUAGE RankNTypes            #-}
+{-# LANGUAGE RecordWildCards       #-}
+{-# LANGUAGE TemplateHaskell       #-}
 
 -----------------------------------------------------------------------------
 -- |
@@ -55,7 +56,9 @@ import           Control.Error
 import           Control.Exception.Lens
 import           Control.Lens
 import           Control.Monad
-import           Control.Monad.Logger
+import           Control.Monad.Base
+import           Control.Monad.Catch
+import           Control.Monad.Primitive
 import           Control.Monad.Trans
 import           Data.ByteString.Char8       (ByteString)
 import qualified Data.ByteString.Char8       as B
@@ -73,6 +76,8 @@ import           System.Environment
 import           System.Exit
 import           System.IO
 import           System.Process
+-------------------------------------------------------------------------------
+import           Hadron.Logger
 -------------------------------------------------------------------------------
 
 
@@ -178,7 +183,7 @@ type RunToken = String
 
 -------------------------------------------------------------------------------
 launchMapReduce
-    :: (MonadIO m, MonadLogger m)
+    :: (MonadIO m)
     => HadoopEnv
     -> MapReduceKey
     -> RunToken
@@ -187,19 +192,19 @@ launchMapReduce
 launchMapReduce HadoopEnv{..} mrKey runToken HadoopRunOpts{..} = do
     exec <- scriptIO getExecutablePath
     prog <- scriptIO getProgName
-    lift $ $(logInfo) $ T.concat ["Launching Hadoop job for MR key: ", T.pack mrKey]
+    liftIO $ infoM "Hadron.Hadoop" $ "Launching Hadoop job for MR key: " <> mrKey
 
     let args = mkArgs exec prog
 
-    lift $ $(logInfo) $ T.concat ["Hadoop arguments: ", T.pack (intercalate " " args)]
+    liftIO . infoM "Hadron.Hadoop" $ "Hadoop arguments: " <> (intercalate " " args)
 
     (code, out, eout) <- scriptIO $ readProcessWithExitCode hsBin args ""
     case code of
       ExitSuccess -> return ()
       e -> do
-        lift $ $(logError) $ T.intercalate "\n"
+        liftIO . errorM "Hadron.Hadoop" $ intercalate "\n"
           [ "Hadoop job failed.", "StdOut:"
-          , T.pack out, "", "StdErr:", T.pack eout]
+          , out, "", "StdErr:", eout]
         hoistEither $ Left $ "MR job failed with: " ++ show e
     where
       mkArgs exec prog =
@@ -367,9 +372,9 @@ hdfsGet HadoopEnv{..} p = do
     tmpFile <- randomFilename
     createDirectoryIfMissing True tmpRoot
     -- rawSystem hsBin ["chmod", "a+rw", tmpRoot]
-    (res,out,err) <- readProcessWithExitCode hsBin ["fs", "-get", p, tmpFile]  ""
+    (res,out,e) <- readProcessWithExitCode hsBin ["fs", "-get", p, tmpFile]  ""
     case res of
-      ExitFailure i -> error $ "hdfsGet failed: " <> show i <> ".\n" <> out <> "\n" <> err
+      ExitFailure i -> error $ "hdfsGet failed: " <> show i <> ".\n" <> out <> "\n" <> e
       ExitSuccess -> return tmpFile
 
 
@@ -389,7 +394,7 @@ hdfsLocalStream hs fp = do
 -------------------------------------------------------------------------------
 -- | Stream contents of a folder one by one from HDFS.
 hdfsLocalStreamMulti
-    :: (MonadIO m, MonadUnsafeIO m, MonadThrow m)
+    :: (MonadIO m, MonadThrow m, MonadBase base m, PrimMonad base)
     => HadoopEnv
     -> FilePath
     -- ^ Location / glob pattern

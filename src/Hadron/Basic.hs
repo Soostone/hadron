@@ -62,6 +62,8 @@ import           Control.Applicative
 import           Control.Category
 import           Control.Lens
 import           Control.Monad
+import           Control.Monad.Base
+import           Control.Monad.Primitive
 import           Control.Monad.Trans
 import qualified Data.ByteString.Char8      as B
 import qualified Data.ByteString.Lazy.Char8 as LB
@@ -132,7 +134,7 @@ getFileName = liftIO $ getEnv "map_input_file"
 
 -- | Construct a mapper program using given serialization Prism.
 mapperWith
-    :: (MonadIO m, MonadUnsafeIO m)
+    :: (MonadIO m, PrimMonad base, MonadBase base m)
     => Prism' B.ByteString t
     -> Conduit B.ByteString m (CompositeKey, t)
     -> m ()
@@ -145,7 +147,7 @@ mapperWith p f = mapper $ f =$= C.map conv
 
 -- | Construct a mapper program using a given low-level conduit.
 mapper
-    :: (MonadIO m, MonadUnsafeIO m)
+    :: (MonadIO m, PrimMonad base, MonadBase base m)
     => Conduit B.ByteString m (CompositeKey, B.ByteString)
     -- ^ A key/value producer - don't worry about putting any newline
     -- endings yourself, we do that for you.
