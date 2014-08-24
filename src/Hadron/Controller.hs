@@ -270,8 +270,10 @@ data MapReduce a b = forall k v. MRKey k => MapReduce {
     , _mrReducer :: Reducer k v b
     }
 
+--------------------------------------------------------------------------------
+mrOptions :: Lens' (MapReduce a b) MROptions
+mrOptions f (MapReduce o p m r) = (\ o' -> MapReduce o' p m r) <$> f o
 
-makeLenses ''MapReduce
 
 -- | Tap is a data source/sink definition that *knows* how to serve
 -- records of type 'a'.
@@ -369,7 +371,7 @@ data ConI a where
 -- an IO computation. Remember that the same 'main' function will run
 -- on both the main orchestrator process and on each and every
 -- map/reduce node.
-newtype Controller a = Controller { unController :: Program ConI a }
+newtype Controller a = Controller (Program ConI a)
     deriving (Functor, Applicative, Monad)
 
 
@@ -466,7 +468,16 @@ setupBinaryDir settings loc chk = do
     return localFile
 
 
+tapLens
+    :: (Functor f, Show a)
+    => a
+    -> (Maybe B.ByteString -> f (Maybe B.ByteString))
+    -> ContState
+    -> f ContState
 tapLens curId = csMRVars.at ("tap_" <> show curId)
+
+
+pickId :: MonadState ContState m => m Int
 pickId = do
     curId <- use csDynId
     csDynId %= (+1)
@@ -727,7 +738,7 @@ joinStep fs = MapReduce mro pSerialize mp rd
 
       dataSets :: [(FilePath, DataSet)]
       dataSets = map (\ (loc, i) -> (loc, DataSet (showBS i))) $
-                 zip locations [0..]
+                 zip locations ([0..] :: [Int])
 
       dsIx :: M.Map FilePath DataSet
       dsIx = M.fromList dataSets

@@ -72,7 +72,7 @@ data MROptions = MROptions {
     }
 
 
-makeLenses '' MROptions
+makeLenses ''MROptions
 
 instance Default MROptions where
     def = MROptions NoPartition RegularComp Nothing Nothing Nothing Nothing

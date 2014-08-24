@@ -73,7 +73,7 @@ import           Data.Conduit.Blaze
 import qualified Data.Conduit.List          as C
 import           Data.List
 import           Data.Monoid
-import           Options.Applicative        hiding (Parser)
+import           Options.Applicative
 import           Prelude                    hiding (id, (.))
 import           System.Environment
 import           System.IO
@@ -297,6 +297,7 @@ data Command = Map | Reduce
 
 
 -------------------------------------------------------------------------------
+commandParse :: Parser Command
 commandParse = subparser
     ( command "map" (info (pure Map)
         ( progDesc "Run mapper." ))

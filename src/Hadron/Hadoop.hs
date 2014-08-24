@@ -129,12 +129,15 @@ instance Default Comparator where def = RegularComp
 
 -------------------------------------------------------------------------------
 -- | Number of total key segments.
+numSegs :: PartitionStrategy -> Int
 numSegs NoPartition = 1
 numSegs Partition{..} = keySegs
+
 
 -------------------------------------------------------------------------------
 -- | Number of key segments that constitute input object equality, for
 -- hadoop partitions.
+eqSegs :: PartitionStrategy -> Int
 eqSegs NoPartition = 1
 eqSegs Partition{..} = partSegs
 
@@ -296,6 +299,7 @@ hdfsLs HadoopEnv{..} p = do
 -- | TODO: The lcs function does not guarantee contiguous-common
 -- regions, so this function may behave strangely. We should figure
 -- out a way to use longest-common-prefix like semantics.
+parseLS :: [Char] -> String -> [[Char]]
 parseLS pat out = filter isOK $ map clean $ lines out
   where
     pat' = T.pack pat

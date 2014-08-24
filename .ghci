@@ -1,2 +1,4 @@
 :set -isrc
 :set -Wall
+:set -fno-warn-unused-do-bind
+
