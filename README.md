@@ -1,7 +1,7 @@
 # Hadron - Hadoop MapReduce in Haskell [![Build Status](https://travis-ci.org/Soostone/hadron.svg?branch=master)](https://travis-ci.org/Soostone/hadron)
 
-Hadron aims to bring Haskell's type-safety to construction of
-compley and delicate world of Hadoop Streaming MapReduce.
+Hadron aims to bring Haskell's type-safety to the complex and delicate
+world of Hadoop Streaming MapReduce.
 
 ## Features
 
@@ -25,7 +25,7 @@ compley and delicate world of Hadoop Streaming MapReduce.
   input in order to support multiple datasets.
   
 * Various convenience combinators in the Controller module, covering
-  the most common tasks.
+  common tasks.
   
   
 ## Shortcomings and Issues

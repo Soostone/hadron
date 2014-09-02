@@ -1,7 +1,7 @@
 name:                hadron
 version:             0.4
-description:         Use Haskell programs for data processing with Hadoop
-synopsis:            Use Haskell programs for data processing with Hadoop
+description:         Use Haskell to create Hadoop MapReduce programs
+synopsis:            Use Haskell to create Hadoop MapReduce programs
 license:             BSD3
 license-file:        LICENSE
 author:              Ozgun Ataman, Doug Beardsley
@@ -23,10 +23,10 @@ library
     Hadron.Types
 
   build-depends:       
-     async,
-     attoparsec,
+     async                        >= 2.0 && < 2.1,
+     attoparsec                   >= 0.11 && < 0.13,
      attoparsec-conduit           >= 1.0,
-     base                         >= 4.5,
+     base                         >= 4.5 && < 5,
      base64-bytestring,
      blaze-builder,
      blaze-builder-conduit,
@@ -44,7 +44,7 @@ library
      hashable,
      hslogger                     >= 1.2 && < 1.3,
      lcs,
-     lens, 
+     lens                         >= 4.0 && < 4.5, 
      mmorph,
      mtl,
      operational,
