@@ -148,6 +148,7 @@ data HadoopRunOpts = HadoopRunOpts {
     , mrsPart       :: PartitionStrategy
     , mrsNumMap     :: Maybe Int
     , mrsNumReduce  :: Maybe Int
+    , mrsCombine    :: Bool
     , mrsCompress   :: Maybe String
     , mrsOutSep     :: Maybe Char
     -- ^ A separator to be used in reduce output. It is sometimes
@@ -158,7 +159,7 @@ data HadoopRunOpts = HadoopRunOpts {
 
 
 instance Default HadoopRunOpts where
-    def = HadoopRunOpts [] "" def Nothing Nothing Nothing Nothing Nothing def
+    def = HadoopRunOpts [] "" def Nothing Nothing False Nothing Nothing Nothing def
 
 -- | A simple starting point to defining 'HadoopRunOpts'
 mrSettings
@@ -215,16 +216,21 @@ launchMapReduce HadoopEnv{..} mrKey runToken HadoopRunOpts{..} = do
             comp ++ numMap ++ numRed ++ outSep ++ jobName ++
             comparator ++ part ++
             inputs ++
-            [ "-output", mrsOutput
-            , "-mapper", "\"" ++ prog ++ " " ++ runToken ++
-                " map_" ++ mrKey ++ "\""
-            , "-reducer", "\"" ++ prog ++ " " ++ runToken ++
-                " reduce_" ++ mrKey ++ "\""
-            , "-file", exec
-            ]
+            [ "-output", mrsOutput] ++
+            mkStage prog "mapper" ++
+            mkStage prog "reducer" ++
+            if mrsCombine then mkStage prog "combiner" else [] ++
+            [ "-file", exec ]
+
+
+      mkStage prog stage =
+          [ "-" ++ stage
+          , "\"" ++ prog ++ " " ++ runToken ++ " " ++ stage ++ "_" ++ mrKey ++ "\""
+          ]
 
       jobName = maybe [] (\nm -> ["-D", "mapred.job.name=\"" <> nm <>"\""])
                 mrsJobName
+
 
       inputs = concatMap mkInput mrsInput
       mkInput i = ["-input", i]

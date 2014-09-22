@@ -47,6 +47,7 @@ module Hadron.Basic
     -- * Low-level Utilities
     , mapper
     , mapperWith
+    , combiner
     , reducer
     , reducerMain
 
@@ -65,16 +66,17 @@ import           Control.Monad
 import           Control.Monad.Base
 import           Control.Monad.Primitive
 import           Control.Monad.Trans
-import qualified Data.ByteString.Char8      as B
-import qualified Data.ByteString.Lazy.Char8 as LB
+import           Control.Monad.Trans.Resource
+import qualified Data.ByteString.Char8        as B
+import qualified Data.ByteString.Lazy.Char8   as LB
 import           Data.Conduit
-import           Data.Conduit.Binary        (sinkHandle, sourceHandle)
+import           Data.Conduit.Binary          (sinkHandle, sourceHandle)
 import           Data.Conduit.Blaze
-import qualified Data.Conduit.List          as C
+import qualified Data.Conduit.List            as C
 import           Data.List
 import           Data.Monoid
 import           Options.Applicative
-import           Prelude                    hiding (id, (.))
+import           Prelude                      hiding (id, (.))
 import           System.Environment
 import           System.IO
 -------------------------------------------------------------------------------
@@ -132,18 +134,6 @@ getFileName :: MonadIO m => m FilePath
 getFileName = liftIO $ getEnv "map_input_file"
 
 
--- | Construct a mapper program using given serialization Prism.
-mapperWith
-    :: (MonadIO m, PrimMonad base, MonadBase base m)
-    => Prism' B.ByteString t
-    -> Conduit B.ByteString m (CompositeKey, t)
-    -> m ()
-mapperWith p f = mapper $ f =$= C.map conv
-    where
-      -- conv x = _2 (firstOf (re p)) x
-      conv (k,v) = (k, review p v)
-
-
 
 -- | Construct a mapper program using a given low-level conduit.
 mapper
@@ -152,26 +142,36 @@ mapper
     -- ^ A key/value producer - don't worry about putting any newline
     -- endings yourself, we do that for you.
     -> m ()
-mapper f = do
-    liftIO $ hSetBuffering stderr LineBuffering
-    liftIO $ hSetBuffering stdout LineBuffering
-    liftIO $ hSetBuffering stdin LineBuffering
+mapper f = mapperWith id f
+
+
+-- | Construct a mapper program using given serialization Prism.
+mapperWith
+    :: (MonadIO m, PrimMonad base, MonadBase base m)
+    => Prism' B.ByteString t
+    -> Conduit B.ByteString m (CompositeKey, t)
+    -> m ()
+mapperWith p f = do
+    setLineBuffering
     sourceHandle stdin $=
       f $=
-      C.map conv $=
-      builderToByteString $$
+      encodeMapOutput p $$
       sinkHandle stdout
-    where
-      conv (k,v) = mconcat
-        [ mconcat (intersperse tab (map fromByteString k))
-        , tab
-        , fromByteString v
-        , nl ]
-
-      tab = fromByteString "\t"
-      nl = fromByteString "\n"
 
 
+combiner
+    :: (MonadBase base m, PrimMonad base, MonadIO m, MonadThrow m)
+    => MROptions
+    -> Prism' B.ByteString b
+    -> Conduit (CompositeKey, b) m (CompositeKey, b)
+    -> m ()
+combiner mro mrInPrism f  = do
+    setLineBuffering
+    sourceHandle stdin =$=
+      decodeReducerInput mro mrInPrism =$=
+      f =$=
+      encodeMapOutput mrInPrism $$
+      sinkHandle stdout
 
 
 -------------------------------------------------------------------------------
@@ -192,6 +192,44 @@ reducerMain mro@MROptions{..} mrInPrism g =
 
 
 
+setLineBuffering :: MonadIO m => m ()
+setLineBuffering = do
+    liftIO $ hSetBuffering stderr LineBuffering
+    liftIO $ hSetBuffering stdout LineBuffering
+    liftIO $ hSetBuffering stdin LineBuffering
+
+
+-------------------------------------------------------------------------------
+-- | Appropriately produce lines of mapper output in a way compliant
+-- with Hadoop and 'decodeReducerInput'.
+encodeMapOutput
+    :: (PrimMonad base, MonadBase base m)
+    => Prism' B.ByteString b
+    -> Conduit (CompositeKey, b) m B.ByteString
+encodeMapOutput mrInPrism = C.map conv $= builderToByteString
+    where
+
+      conv (k,v) = mconcat
+        [ mconcat (intersperse tab (map fromByteString k))
+        , tab
+        , fromByteString (review mrInPrism v)
+        , nl ]
+
+      tab = fromByteString "\t"
+      nl = fromByteString "\n"
+
+
+decodeReducerInput
+    :: (MonadIO m, MonadThrow m)
+    => MROptions
+    -> Prism' B.ByteString b
+    -> ConduitM a (CompositeKey, b) m ()
+decodeReducerInput mro mrInPrism =
+    sourceHandle stdin =$=
+    lineC (numSegs (_mroPart mro)) =$=
+    C.mapMaybe (_2 (firstOf mrInPrism))
+
+
 -- | An easy way to construct a reducer pogram. Just supply the
 -- arguments and you're done.
 reducer
@@ -201,11 +239,11 @@ reducer
     -> Reducer CompositeKey a B.ByteString
     -- ^ A step function for the given key.
     -> Source IO B.ByteString
-reducer MROptions{..} mrInPrism f = do
-    liftIO $ hSetBuffering stderr LineBuffering
-    liftIO $ hSetBuffering stdout LineBuffering
-    liftIO $ hSetBuffering stdin LineBuffering
-    stream
+reducer mro@MROptions{..} mrInPrism f = do
+    setLineBuffering
+    sourceHandle stdin =$=
+      decodeReducerInput mro mrInPrism =$=
+      go2
     where
       go2 = do
         next <- await
@@ -232,12 +270,6 @@ reducer MROptions{..} mrInPrism f = do
                 Nothing -> do
                   yield x
                   sameKey (Just k)
-
-      stream = sourceHandle stdin =$=
-               lineC (numSegs _mroPart) =$=
-               C.mapMaybe (_2 (firstOf mrInPrism)) =$=
-               go2
-
 
 
 

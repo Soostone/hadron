@@ -108,6 +108,7 @@ module Hadron.Controller
 
 -------------------------------------------------------------------------------
 import           Control.Applicative
+import           Control.Arrow
 import           Control.Error
 import           Control.Exception
 import           Control.Exception.Lens
@@ -248,31 +249,32 @@ instance (Serialize a, Serialize b, Serialize c, Serialize d, Serialize e, Seria
 -------------------------------------------------------------------------------
 -- | Do something with m-r output before writing it to a tap.
 (>.>) :: MapReduce a b -> Conduit b IO c -> MapReduce a c
-(MapReduce o p m r) >.> f = MapReduce o p m (r =$= f)
+(MapReduce o p m c r) >.> f = MapReduce o p m c (r =$= f)
 
 
 -------------------------------------------------------------------------------
 -- | Dome something with the m-r input before starting the map stage.
 (<.<) :: Conduit c IO a -> MapReduce a b -> MapReduce c b
-f <.< (MapReduce o p m r) = MapReduce o p (f =$= m) r
+f <.< (MapReduce o p m c r) = MapReduce o p (f =$= m) c r
 
 -------------------------------------------------------------------------------
 -- | A packaged MapReduce step. Make one of these for each distinct
 -- map-reduce step in your overall 'Controller' flow.
 data MapReduce a b = forall k v. MRKey k => MapReduce {
-      _mrOptions :: MROptions
+      _mrOptions  :: MROptions
     -- ^ Hadoop and MapReduce options affecting only this specific
     -- job.
-    , _mrInPrism :: Prism' B.ByteString v
+    , _mrInPrism  :: Prism' B.ByteString v
     -- ^ A serialization scheme for values between the map-reduce
     -- steps.
-    , _mrMapper  :: Mapper a k v
-    , _mrReducer :: Reducer k v b
+    , _mrMapper   :: Mapper a k v
+    , _mrConbiner :: Maybe (Conduit (k,v) IO (k, v))
+    , _mrReducer  :: Reducer k v b
     }
 
 --------------------------------------------------------------------------------
 mrOptions :: Lens' (MapReduce a b) MROptions
-mrOptions f (MapReduce o p m r) = (\ o' -> MapReduce o' p m r) <$> f o
+mrOptions f (MapReduce o p m c r) = (\ o' -> MapReduce o' p m c r) <$> f o
 
 
 -- | Tap is a data source/sink definition that *knows* how to serve
@@ -526,7 +528,7 @@ orchestrate (Controller p) settings rr s = evalStateT (runEitherT (go p)) s
       eval' (SetVal k v) = csMRVars . at k .= Just v
       eval' (GetVal k) = use (csMRVars . at k)
 
-      eval' (Connect (MapReduce mro _ _ _) inp outp nm) = go'
+      eval' (Connect (MapReduce mro _ _ _ _) inp outp nm) = go'
           where
             go' = do
                 mrKey <- newMRKey
@@ -568,7 +570,7 @@ orchestrate (Controller p) settings rr s = evalStateT (runEitherT (go p)) s
 
 
 
-data Phase = Map | Reduce
+data Phase = Map | Combine | Reduce
 
 
 -------------------------------------------------------------------------------
@@ -584,6 +586,18 @@ data RerunStrategy
 
 instance Default RerunStrategy where
     def = RSFail
+
+
+decodeKey :: (Monad m, MRKey k) => Conduit (CompositeKey, v) m (k, v)
+decodeKey = C.mapMaybe go
+    where
+      go (k,v) = do
+          !k' <- fromCompKey k
+          return (k', v)
+
+
+encodeKey :: (Monad m , MRKey k) => Conduit (k, v) m (CompositeKey, v)
+encodeKey = C.map (first toCompKey)
 
 
 -------------------------------------------------------------------------------
@@ -603,11 +617,11 @@ hadoopMain
     -> RerunStrategy
     -- ^ What to do if destination files already exist.
     -> m ()
-hadoopMain c@(Controller p) hs rr = do
+hadoopMain cont@(Controller p) hs rr = do
     args <- liftIO getArgs
     case args of
       [] -> do
-        res <- orchestrate c hs rr def
+        res <- orchestrate cont hs rr def
         liftIO $ either print (const $ putStrLn "Success.") res
       [runToken, arg] -> do
         _ <- evalStateT (loadState runToken >>
@@ -617,7 +631,8 @@ hadoopMain c@(Controller p) hs rr = do
     where
 
       mkArgs mrKey = [ (Map, "map_" ++ mrKey)
-                     , (Reduce, "reduce_" ++ mrKey) ]
+                     , (Reduce, "reduce_" ++ mrKey)
+                     , (Combine, "combine_" ++ mrKey) ]
 
 
       -- load controller varibles back up
@@ -656,7 +671,7 @@ hadoopMain c@(Controller p) hs rr = do
       go _ _ (SetVal _ _) = return ()
       go _ _ (GetVal k) = use (csMRVars . at k)
 
-      go _ arg (Connect (MapReduce mro mrInPrism mp rd) inp outp _) = do
+      go _ arg (Connect (MapReduce mro mrInPrism mp comb rd) inp outp _) = do
           mrKey <- newMRKey
 
           let dec = protoDec . proto $ head inp
@@ -665,7 +680,7 @@ hadoopMain c@(Controller p) hs rr = do
           let mp' = (mapperWith mrInPrism $
                      dec =$=
                      mp =$=
-                     C.map (\ (!k, !v) -> (toCompKey k, v)))
+                     encodeKey)
 
           let red = do
                   let conv (k,v) = do
@@ -673,6 +688,13 @@ hadoopMain c@(Controller p) hs rr = do
                           return (k', v)
                       rd' = C.mapMaybe conv =$= rd =$= enc
                   liftIO $ (reducerMain mro mrInPrism rd')
+
+
+          let comb' = case comb of
+                  Nothing -> error "Unexpected: No combiner supplied."
+                  Just c -> do
+                      let c' = decodeKey =$= c =$= encodeKey
+                      liftIO $ combiner mro mrInPrism c'
 
 
           case find ((== arg) . snd) $ mkArgs mrKey of
@@ -690,6 +712,13 @@ hadoopMain c@(Controller p) hs rr = do
               catching exception red
                 (\ (e :: SomeException) ->
                      error $ "Exception raised during Reduce in stage " <>
+                             show mrKey <> ": " <> show e)
+
+
+            Just (Combine, _) -> liftIO $ do
+              catching exception comb'
+                (\ (e :: SomeException) ->
+                     error $ "Exception raised during Combine in stage " <>
                              show mrKey <> ": " <> show e)
 
             Nothing -> return ()
@@ -721,7 +750,7 @@ joinStep
     => [(Tap a, JoinType, Mapper a k b)]
     -- ^ Dataset definitions and how to map each dataset.
     -> MapReduce a b
-joinStep fs = MapReduce mro pSerialize mp rd
+joinStep fs = MapReduce mro pSerialize mp Nothing rd
     where
       showBS = B.pack . show
       n = numKeys (undefined :: k)
@@ -814,7 +843,7 @@ mapReduce
     -> b
     -- ^ A starting point for fold
     -> MapReduce a (k,b)
-mapReduce mp rd a0 = MapReduce mro pSerialize m r
+mapReduce mp rd a0 = MapReduce mro pSerialize m  Nothing r
     where
       n = numKeys (undefined :: k)
       mro = def { _mroPart = Partition n n }
@@ -858,7 +887,7 @@ firstBy f = mapReduce mp rd Nothing >.> (C.map snd =$= C.catMaybes)
 -------------------------------------------------------------------------------
 -- | A generic map-only MR step.
 mapMR :: (Serialize b) => (v -> IO [b]) -> MapReduce v b
-mapMR f = MapReduce def pSerialize mp rd
+mapMR f = MapReduce def pSerialize mp Nothing rd
     where
       mp = do
           rng <- liftIO mkRNG
@@ -908,7 +937,7 @@ joinMR
     => Conduit (Either a b) IO (k, Either v v)
     -- ^ Mapper for the input
     -> MapReduce (Either a b) v
-joinMR mp = MapReduce mro pSerialize mp' (go [])
+joinMR mp = MapReduce mro pSerialize mp' Nothing (go [])
     where
       mro = def { _mroPart = Partition (n+1) n }
       n = numKeys (undefined :: k)
