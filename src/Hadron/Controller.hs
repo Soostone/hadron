@@ -268,7 +268,7 @@ data MapReduce a b = forall k v. MRKey k => MapReduce {
     -- ^ A serialization scheme for values between the map-reduce
     -- steps.
     , _mrMapper   :: Mapper a k v
-    , _mrConbiner :: Maybe (Conduit (k,v) IO (k, v))
+    , _mrCombiner :: Maybe (Conduit (k,v) IO (k, v))
     , _mrReducer  :: Reducer k v b
     }
 
