@@ -7,3 +7,5 @@ TAGS
 *.swp
 .cabal-sandbox
 cabal.sandbox.config
+tmp
+*.log

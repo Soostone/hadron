@@ -66,8 +66,6 @@ module Hadron.Controller
     -- * Command Line Entry Point
     , hadoopMain
     , HadoopEnv (..)
-    , clouderaDemo
-    , amazonEMR
 
     -- * Settings for MapReduce Jobs
     , MROptions
@@ -76,8 +74,6 @@ module Hadron.Controller
     , mroNumReduce
     , mroCompress
     , mroOutSep
-    , gzipCodec
-    , snappyCodec
     , PartitionStrategy (..)
     , Comparator (..)
     , RerunStrategy (..)
@@ -103,6 +99,7 @@ module Hadron.Controller
 
     -- * Data Serialization Utilities
     , module Hadron.Protocol
+    , module Hadron.Run
 
     ) where
 
@@ -110,7 +107,6 @@ module Hadron.Controller
 import           Control.Applicative
 import           Control.Arrow
 import           Control.Error
-import           Control.Exception
 import           Control.Exception.Lens
 import           Control.Lens
 import           Control.Monad.Catch
@@ -126,7 +122,7 @@ import qualified Data.Conduit.List            as C
 import           Data.Conduit.Zlib
 import           Data.Default
 import           Data.List
-import qualified Data.Map                     as M
+import qualified Data.Map.Strict              as M
 import           Data.Monoid
 import           Data.RNG
 import           Data.Serialize
@@ -134,9 +130,9 @@ import qualified Data.Text                    as T
 import           Data.Text.Encoding
 import           System.Directory
 import           System.Environment
-import           System.FilePath
-import           System.FilePath.Lens
 
+
+import           System.IO
 -------------------------------------------------------------------------------
 import           Hadron.Basic                 hiding (mapReduce)
 import           Hadron.Join
@@ -337,11 +333,11 @@ fileListTap settings loc = tap loc (Protocol enc dec)
 
 
 data ContState = ContState {
-      _csMRCount :: Int
+      _csMRCount :: ! Int
     -- ^ MR run count; one for each 'connect'.
-    , _csMRVars  :: M.Map String B.ByteString
+    , _csMRVars  :: ! (M.Map String B.ByteString)
     -- ^ Arbitrary key-val store that's communicated to nodes.
-    , _csDynId   :: Int
+    , _csDynId   :: ! Int
     -- ^ Keeps increasing count of dynamic taps in the order they are
     -- created in the Controller monad. Needed so we can communicate
     -- the tap locations to MR nodes.
@@ -457,19 +453,19 @@ newMRKey = do
 
 -------------------------------------------------------------------------------
 -- | Grab list of files in destination, write into a file, put file on
--- HDFS so it is shared and return the local/HDFS path, they are the
--- same, as output.
-setupBinaryDir :: RunContext -> FilePath -> (FilePath -> Bool) -> IO FilePath
+-- HDFS so it is shared and return the (local, hdfs) paths.
+setupBinaryDir :: RunContext -> FilePath -> (FilePath -> Bool) -> IO (LocalFile, FilePath)
 setupBinaryDir settings loc chk = do
-    localFile <- hdfsRandomFilename settings
-    let root = dropFileName localFile
-    createDirectoryIfMissing True root
-    hdfsMkdir settings root
+    localFile <- randomLocalFile
+    hdfsFile <- randomRemoteFile settings
+
     files <- hdfsLs settings loc
     let files' = filter chk files
-    writeFile localFile $ unlines files'
-    hdfsPut settings localFile localFile
-    return localFile
+    withLocalFile settings localFile $ \ f -> writeFile f (unlines files')
+
+    hdfsPut settings localFile hdfsFile
+
+    return (localFile, hdfsFile)
 
 
 tapLens
@@ -488,17 +484,25 @@ pickId = do
     return curId
 
 
-
 -------------------------------------------------------------------------------
 -- | Interpreter for the central job control process
 orchestrate
-    :: (MonadIO m)
+    :: (MonadMask m, MonadIO m)
     => Controller a
     -> RunContext
     -> RerunStrategy
     -> ContState
     -> m (Either String a)
-orchestrate (Controller p) settings rr s = evalStateT (runEitherT (go p)) s
+orchestrate (Controller p) settings rr s = do
+    bracket
+      (liftIO $ openFile "hadron.log" AppendMode)
+      (liftIO . hClose)
+      (\ h -> do liftIO $ do
+                   enableDebugLog
+                   hSetBuffering h LineBuffering
+                   setLogHandle "Hadron" h INFO
+                   infoM "Hadron.Controller" "Initiating orchestration..."
+                 evalStateT (runEitherT (go p)) s)
     where
       go = eval . O.view
 
@@ -510,7 +514,7 @@ orchestrate (Controller p) settings rr s = evalStateT (runEitherT (go p)) s
       eval' (ConIO f) = liftIO f
 
       eval' (MakeTap proto) = do
-          loc <- liftIO $ hdfsRandomFilename settings
+          loc <- liftIO $ randomRemoteFile settings
 
           curId <- pickId
           tapLens curId .= Just (B.pack loc)
@@ -518,14 +522,14 @@ orchestrate (Controller p) settings rr s = evalStateT (runEitherT (go p)) s
           return $ Tap [loc] proto
 
       eval' (BinaryDirTap loc filt) = do
-          localFile <- liftIO $ setupBinaryDir settings loc filt
+          (_, hdfsFile) <- liftIO $ setupBinaryDir settings loc filt
 
           -- remember location of the file from the original loc
           -- string
           curId <- pickId
-          tapLens curId .= Just (B.pack localFile)
+          tapLens curId .= Just (B.pack hdfsFile)
 
-          return $ fileListTap settings localFile
+          return $ fileListTap settings hdfsFile
 
 
       eval' (SetVal k v) = csMRVars . at k .= Just v
@@ -536,9 +540,15 @@ orchestrate (Controller p) settings rr s = evalStateT (runEitherT (go p)) s
             go' = do
                 mrKey <- newMRKey
 
+                liftIO $ infoM "Hadron.Controller"
+                  ("Launching MR job with key: " ++ show mrKey)
+
                 chk <- liftIO $ mapM (hdfsFileExists settings) (location outp)
                 case any id chk of
-                  False -> go'' mrKey
+                  False -> do
+                      liftIO $ infoM "Hadron.Controller"
+                        "Destination file does not exist. Proceeding."
+                      go'' mrKey
                   True ->
                     case rr of
                       RSFail -> liftIO $ errorM "Hadron.Controller" $
@@ -558,11 +568,18 @@ orchestrate (Controller p) settings rr s = evalStateT (runEitherT (go p)) s
               -- serialize current state to HDFS, to be read by
               -- individual mappers reducers of this step.
               runToken <- liftIO $ (mkRNG >>= randomToken 64) <&> B.unpack
-              fn <- liftIO $ mkTempFilePath settings runToken
+              remote <- hdfsTempFilePath settings runToken
+              let local = LocalFile runToken
+
+
               st <- use csMRVars
-              liftIO $ createDirectoryIfMissing True (fn ^. directory)
-              liftIO $ writeFile fn (show st)
-              liftIO $ hdfsPut settings fn fn
+
+              withLocalFile settings local $ \ local ->
+                liftIO $ writeFile local (show st)
+
+              -- put settings file into a file named after the
+              -- randomly generated token.
+              liftIO $ hdfsPut settings local remote
 
               let mrs = mrOptsToRunOpts mro
               launchMapReduce settings mrKey runToken
@@ -612,7 +629,7 @@ encodeKey = C.map (first toCompKey)
 -- mapper/reducer executable when called with right arguments, though
 -- you don't have to worry about that.
 hadoopMain
-    :: forall m a. (MonadThrow m, MonadIO m)
+    :: forall m a. (MonadThrow m, MonadMask m, MonadIO m)
     => Controller a
     -- ^ The Hadoop streaming application to run.
     -> RunContext
@@ -620,11 +637,11 @@ hadoopMain
     -> RerunStrategy
     -- ^ What to do if destination files already exist.
     -> m ()
-hadoopMain cont@(Controller p) hs rr = do
+hadoopMain cont@(Controller p) settings rr = do
     args <- liftIO getArgs
     case args of
       [] -> do
-        res <- orchestrate cont hs rr def
+        res <- orchestrate cont settings rr def
         liftIO $ either print (const $ putStrLn "Success.") res
       [runToken, arg] -> do
         _ <- evalStateT (loadState runToken >>
@@ -640,11 +657,13 @@ hadoopMain cont@(Controller p) hs rr = do
 
       -- load controller varibles back up
       loadState runToken = do
-          fn <- mkTempFilePath hs runToken
-          tmp <- liftIO $ hdfsGet hs fn
-          st <- liftIO $ readFile tmp <&> read
+          fn <- hdfsTempFilePath settings runToken
+          tmp <- liftIO $ hdfsGet settings fn
+          st <- liftIO $ withLocalFile settings tmp $ \ local -> do
+            !st <- readFile local <&> read
+            -- removeFile local
+            return st
           csMRVars %= M.union st
-          liftIO $ removeFile tmp
 
 
       go :: String -> String -> ConI b -> StateT ContState m b
@@ -667,7 +686,7 @@ hadoopMain cont@(Controller p) hs rr = do
           case dynLoc of
             Nothing -> error $
               "Dynamic location can't be determined for BinaryDirTap at: " <> loc
-            Just loc' -> return $ fileListTap hs $ B.unpack loc'
+            Just loc' -> return $ fileListTap settings $ B.unpack loc'
 
       -- setting in map-reduce phase is a no-op... There's nobody to
       -- communicate it to.
@@ -919,12 +938,11 @@ oneSnap settings s3fp f = do
           awaitForever yield
   where
     putHeaders x = do
-        tmp <- hdfsRandomFilename settings
-        B.writeFile tmp x
+        tmp <- randomFileName
+        withLocalFile settings tmp $ \ fn -> B.writeFile fn x
         chk <- hdfsFileExists settings s3fp
-        when (not chk) $ hdfsPut settings tmp s3fp >> return ()
-        removeFile tmp
-
+        when (not chk) $ void $ hdfsPut settings tmp s3fp
+        withLocalFile settings tmp removeFile
 
 
 -------------------------------------------------------------------------------

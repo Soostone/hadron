@@ -45,35 +45,26 @@ module Hadron.Run.Hadoop
     , tmpRoot
     , hdfsCat
     , hdfsGet
-    , hdfsLocalStream
-    , hdfsLocalStreamMulti
     , hdfsChmod
     , randomFilename
 
     ) where
 
 -------------------------------------------------------------------------------
-import           Control.Concurrent.Async
 import           Control.Error
-import           Control.Exception.Lens
 import           Control.Lens
 import           Control.Monad
-import           Control.Monad.Base
-import           Control.Monad.Catch
-import           Control.Monad.Primitive
 import           Control.Monad.Trans
 import           Data.ByteString.Char8       (ByteString)
 import qualified Data.ByteString.Char8       as B
 import           Data.Conduit
 import           Data.Conduit.Binary         (sourceHandle)
-import           Data.Conduit.Zlib
 import           Data.Default
 import           Data.List
 import           Data.List.LCS.HuntSzymanski
 import           Data.Monoid
 import           Data.RNG
 import qualified Data.Text                   as T
-import           System.Directory
 import           System.Environment
 import           System.Exit
 import           System.IO
@@ -370,68 +361,29 @@ hdfsCat HadoopEnv{..} p = do
       hPutStrLn stderr $ concat ["Could not open file ", p, ".  Skipping...."]
 
 
-------------------------------------------------------------------------------
--- | Generates a random filename in the /tmp/hadron directory.
-randomFilename :: IO FilePath
-randomFilename = do
-    tk <- mkRNG >>= randomToken 64
-    return $ B.unpack $ B.concat [B.pack tmpRoot, tk]
-
 
 tmpRoot :: FilePath
 tmpRoot = "/tmp/hadron/"
 
 
+------------------------------------------------------------------------------
+-- | Generates a random filename in the /tmp/hadron directory.
+randomFilename :: HadoopEnv -> IO FilePath
+randomFilename settings = do
+    tk <- mkRNG >>= randomToken 64
+    hdfsMkdir settings tmpRoot
+    return $ B.unpack $ B.concat [B.pack tmpRoot, tk]
+
+
 -------------------------------------------------------------------------------
 -- | Copy file from HDFS to a temporary local file whose name is returned.
-hdfsGet :: HadoopEnv -> FilePath -> IO FilePath
-hdfsGet HadoopEnv{..} p = do
-    tmpFile <- randomFilename
-    createDirectoryIfMissing True tmpRoot
-    -- rawSystem _hsBin ["chmod", "a+rw", tmpRoot]
-    (res,out,e) <- readProcessWithExitCode _hsBin ["fs", "-get", p, tmpFile]  ""
+hdfsGet :: HadoopEnv -> FilePath -> FilePath -> IO ()
+hdfsGet settings@HadoopEnv{..} p local = do
+    (res,out,e) <- readProcessWithExitCode _hsBin ["fs", "-get", p, local]  ""
     case res of
       ExitFailure i -> error $ "hdfsGet failed: " <> show i <> ".\n" <> out <> "\n" <> e
-      ExitSuccess -> return tmpFile
+      ExitSuccess -> return ()
 
-
--------------------------------------------------------------------------------
--- | Copy a file down to local FS, then stream its content.
-hdfsLocalStream :: MonadIO m => HadoopEnv -> FilePath -> Producer m ByteString
-hdfsLocalStream hs fp = do
-    random <- liftIO $ hdfsGet hs fp
-    h <- liftIO $ catching _IOException
-           (openFile random ReadMode)
-           (\e ->  error $ "hdfsLocalStream failed with open file: " <> show e)
-    sourceHandle h
-    liftIO $ hClose h
-    liftIO $ removeFile random
-
-
--------------------------------------------------------------------------------
--- | Stream contents of a folder one by one from HDFS.
-hdfsLocalStreamMulti
-    :: (MonadIO m, MonadThrow m, MonadBase base m, PrimMonad base)
-    => HadoopEnv
-    -> FilePath
-    -- ^ Location / glob pattern
-    -> (FilePath -> Bool)
-    -- ^ File filter based on name
-    -> Source m ByteString
-hdfsLocalStreamMulti hs loc chk = do
-    fs <- liftIO $ hdfsLs hs loc <&> filter chk
-    lfs <- liftIO $ mapConcurrently (hdfsGet hs) fs
-    forM_ (zip lfs fs) $ \ (local, fp) -> do
-        h <- liftIO $ catching _IOException
-             (openFile local ReadMode)
-             (\e ->  error $ "hdfsLocalStream failed with open file: " <> show e)
-        let getFile = sourceHandle h
-        if isSuffixOf "gz" fp
-          then getFile =$= ungzip
-          else getFile
-        liftIO $ do
-          hClose h
-          removeFile local
 
 
 

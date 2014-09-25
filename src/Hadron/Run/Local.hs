@@ -35,11 +35,19 @@ import           Data.RNG
 import           System.Directory
 import           System.Environment
 import           System.Exit
+import           System.FilePath.Lens
+import           System.FilePath.Posix
+import           System.Posix.Env
 import           System.Process
 -------------------------------------------------------------------------------
 import           Hadron.Logger
 import qualified Hadron.Run.Hadoop            as H
 -------------------------------------------------------------------------------
+
+
+newtype LocalFile = LocalFile { _unLocalFile :: FilePath }
+    deriving (Eq,Show,Read,Ord)
+makeLenses ''LocalFile
 
 
 data LocalRunSettings = LocalRunSettings {
@@ -58,12 +66,15 @@ type Local = ReaderT LocalRunSettings IO
 runLocal :: r -> ReaderT r m a -> m a
 runLocal env f = runReaderT f env
 
+
 -------------------------------------------------------------------------------
-path :: (MonadIO m, MonadReader LocalRunSettings m) => FilePath -> m FilePath
-path fp = do
+path :: (MonadIO m, MonadReader LocalRunSettings m) => LocalFile -> m FilePath
+path (LocalFile fp) = do
     root <- view lrsTempPath
-    liftIO $ createDirectoryIfMissing True root
-    return $ root ++ fp
+    let p = root </> fp
+        dir = p ^. directory
+    liftIO $ createDirectoryIfMissing True dir
+    return p
 
 
 -------------------------------------------------------------------------------
@@ -74,21 +85,29 @@ localMapReduce
     -> H.HadoopRunOpts
     -> EitherT String m ()
 localMapReduce mrKey token H.HadoopRunOpts{..} = do
-    exec <- scriptIO getExecutablePath
+    exPath <- scriptIO getExecutablePath
     prog <- scriptIO getProgName
     liftIO $ infoM "Hadron.Run.Local" $
       "Launching Hadoop job for MR key: " <> mrKey
 
+
+
     let infiles = intercalate " " mrsInput
 
         command = "cat " <> infiles <> " | " <>
-          "./" <> prog <> " " <> token <> " " <> "mapper_" <> mrKey <> " | " <>
-          "sort" <> " " <>
-          "./" <> prog <> " " <> token <> " " <> "reducer_" <> mrKey <> " | " <>
-          "> " <> mrsOutput
+          exPath <> " " <> token <> " " <> "mapper_" <> mrKey <> " | " <>
+          "sort" <> " | " <>
+          exPath <> " " <> token <> " " <> "reducer_" <> mrKey <>
+          " > " <> mrsOutput
 
     liftIO $ infoM "Hadron.Run.Local" $
       "Executing local command: " ++ show command
+
+    -- TODO: We must actually map over each file individually set this
+    -- env variable to each file's name at each step. This may break
+    -- some MR programs that rely on accurately knowing the name of
+    -- the file on which they are operating.
+    scriptIO $ setEnv "map_input_file" infiles True
 
     res <- scriptIO $ system command
     case res of
@@ -98,78 +117,74 @@ localMapReduce mrKey token H.HadoopRunOpts{..} = do
         hoistEither $ Left $ "Stage failed with: " ++ show e
 
 
-
-
-
-
-
 -------------------------------------------------------------------------------
 -- | Check if the target file is present.
 hdfsFileExists
-  :: (MonadIO m, MonadReader LocalRunSettings m) =>
-     FilePath -> m Bool
+    :: (MonadIO m, MonadReader LocalRunSettings m)
+    => LocalFile
+    -> m Bool
 hdfsFileExists p = liftIO . doesFileExist =<< path p
 
 
 -------------------------------------------------------------------------------
 hdfsDeletePath
     :: (MonadIO m, MonadReader LocalRunSettings m)
-    => FilePath -> m ()
+    => LocalFile
+    -> m ()
 hdfsDeletePath p = liftIO . removeDirectoryRecursive =<< path p
 
 
 -------------------------------------------------------------------------------
 hdfsLs
     :: (MonadIO m, MonadReader LocalRunSettings m)
-    => FilePath -> m [FilePath]
+    => LocalFile -> m [FilePath]
 hdfsLs p = liftIO . getDirectoryContents =<< path p
 
 
 -------------------------------------------------------------------------------
 hdfsPut
     :: (MonadIO m, MonadReader LocalRunSettings m)
-    => FilePath -> FilePath -> m ()
-hdfsPut fr to = do
-    fr' <- path fr
-    to' <- path to
-    liftIO $ copyFile fr' to'
+    => LocalFile
+    -> LocalFile
+    -> m ()
+hdfsPut src dest = do
+    src' <- path src
+    dest' <- path dest
+    liftIO $ copyFile src' dest'
 
 
 -------------------------------------------------------------------------------
 hdfsMkdir
     :: (MonadIO m, MonadReader LocalRunSettings m)
-    => FilePath
+    => LocalFile
     -> m ()
 hdfsMkdir p = liftIO . createDirectoryIfMissing True =<< path p
 
 
 -------------------------------------------------------------------------------
-hdfsCat :: FilePath -> Producer (ResourceT Local) B.ByteString
+hdfsCat :: LocalFile -> Producer (ResourceT Local) B.ByteString
 hdfsCat p = sourceFile =<< (lift . lift) (path p)
 
 
 -------------------------------------------------------------------------------
 hdfsGet
     :: (MonadIO m, MonadReader LocalRunSettings m)
-    => FilePath
-    -> m FilePath
+    => LocalFile
+    -> m LocalFile
 hdfsGet fp = do
-    target <- randomFilename
+    target <- randomFileName
     hdfsPut fp target
     return target
 
 
 
-hdfsLocalStream :: FilePath -> Producer (ResourceT Local) B.ByteString
+hdfsLocalStream :: LocalFile -> Producer (ResourceT Local) B.ByteString
 hdfsLocalStream = hdfsCat
 
 
-------------------------------------------------------------------------------
--- | Generates a random filename in the /tmp/hadron directory.
-randomFilename :: (MonadIO m, MonadReader LocalRunSettings m) => m FilePath
-randomFilename = do
-    tk <- liftIO $ mkRNG >>= randomToken 64
-    path ("/tmp/" ++ B.unpack tk)
+randomFileName :: MonadIO m => m LocalFile
+randomFileName = (LocalFile . B.unpack) `liftM` liftIO (mkRNG >>= randomToken 64)
+
 
 
 

@@ -18,7 +18,6 @@ import           System.IO
 import           System.Log.Formatter
 import           System.Log.Handler         (setFormatter)
 import           System.Log.Handler.Simple
-import           System.Log.Handler.Syslog
 import           System.Log.Logger
 -------------------------------------------------------------------------------
 
@@ -31,14 +30,7 @@ setLogHandle logNm h lvl = do
     lh <- streamHandler h lvl >>= \ lh ->
          return (setFormatter lh (simpleLogFormatter "[$time : $loggername : $prio] $msg"))
     updateGlobalLogger logNm (setHandlers [lh])
-
-
--------------------------------------------------------------------------------
--- | Log everything to system log
-initLogging :: Priority -> IO ()
-initLogging lvl = do
-    lh <- openlog "Hadron" [PID] USER lvl
-    updateGlobalLogger rootLoggerName (setLevel lvl . setHandlers [lh])
+    -- updateGlobalLogger rootLoggerName (addHandler lh)
 
 
 -------------------------------------------------------------------------------
