@@ -378,7 +378,7 @@ randomFilename settings = do
 -------------------------------------------------------------------------------
 -- | Copy file from HDFS to a temporary local file whose name is returned.
 hdfsGet :: HadoopEnv -> FilePath -> FilePath -> IO ()
-hdfsGet settings@HadoopEnv{..} p local = do
+hdfsGet HadoopEnv{..} p local = do
     (res,out,e) <- readProcessWithExitCode _hsBin ["fs", "-get", p, local]  ""
     case res of
       ExitFailure i -> error $ "hdfsGet failed: " <> show i <> ".\n" <> out <> "\n" <> e

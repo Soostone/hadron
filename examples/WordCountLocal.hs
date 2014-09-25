@@ -20,9 +20,15 @@ main :: IO ()
 main = hadoopMain app (LocalRun def) RSReRun
 
 
+-- notice how path is a file
 source = tap "data/sample.csv" (csvProtocol def)
 
-target = tap "data/wordFrequency.csv" (csvProtocol def)
+
+-- notice how path is a folder
+target = tap "data/wordFrequency" (csvProtocol def)
+
+
+-- notice how output is a file
 wordCountTarget = tap "data/wordCount.csv" (csvProtocol def)
 
 

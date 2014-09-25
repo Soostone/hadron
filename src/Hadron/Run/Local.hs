@@ -86,19 +86,34 @@ localMapReduce
     -> EitherT String m ()
 localMapReduce mrKey token H.HadoopRunOpts{..} = do
     exPath <- scriptIO getExecutablePath
-    prog <- scriptIO getProgName
     liftIO $ infoM "Hadron.Run.Local" $
       "Launching Hadoop job for MR key: " <> mrKey
 
 
+    expandedInput <- liftIO $ forM mrsInput $ \ inp -> do
+      chk <- doesDirectoryExist inp
+      case chk of
+        False -> return [inp]
+        True -> do
+          fs <- getDirectoryContents inp
+          return $ map (inp </>)
+                 $ filter (not . flip elem [".", ".."]) fs
 
-    let infiles = intercalate " " mrsInput
+
+    outFile <- liftIO $ case mrsOutput ^. extension . to null of
+      False -> return mrsOutput
+      True -> do
+          createDirectoryIfMissing True mrsOutput
+          return $ mrsOutput </> "0000.out"
+
+
+    let infiles = intercalate " " $ concat expandedInput
 
         command = "cat " <> infiles <> " | " <>
           exPath <> " " <> token <> " " <> "mapper_" <> mrKey <> " | " <>
           "sort" <> " | " <>
           exPath <> " " <> token <> " " <> "reducer_" <> mrKey <>
-          " > " <> mrsOutput
+          " > " <> outFile
 
     liftIO $ infoM "Hadron.Run.Local" $
       "Executing local command: " ++ show command
