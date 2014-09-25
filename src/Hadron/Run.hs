@@ -108,7 +108,7 @@ launchMapReduce
     -> H.HadoopRunOpts
     -> EitherT String m ()
 launchMapReduce (LocalRun env) mrKey token opts =
-    EitherT . L.runLocal env . runEitherT $ (L.localMapReduce mrKey token opts)
+    EitherT . L.runLocal env . runEitherT $ (L.localMapReduce env mrKey token opts)
 launchMapReduce (HadoopRun env _) mrKey token opts =
     H.hadoopMapReduce env mrKey token opts
 
@@ -236,13 +236,6 @@ hdfsTempFilePath env fp = case env of
 -- | Helper to work with relative paths using Haskell functions like
 -- 'readFile' and 'writeFile'.
 withLocalFile
-    :: MonadIO m
-    => RunContext
-    -> LocalFile
-    -- ^ A relative path in our working folder
-    -> (FilePath -> m b)
-    -- ^ What to do with the absolute path.
-    -> m b
-withLocalFile settings fp f = f =<< L.runLocal (lset settings) (L.path fp)
-
+  :: MonadIO m => RunContext -> LocalFile -> (FilePath -> m b) -> m b
+withLocalFile rs fp f = L.withLocalFile (lset rs) fp f
 

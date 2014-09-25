@@ -6,11 +6,13 @@
 module Main where
 
 -------------------------------------------------------------------------------
+import           Control.Category
 import qualified Data.ByteString.Char8 as B
 import           Data.Conduit
 import qualified Data.Conduit.List     as C
 import           Data.CSV.Conduit
 import           Data.Default
+import           Prelude               hiding ((.))
 -------------------------------------------------------------------------------
 import           Hadron.Controller
 -------------------------------------------------------------------------------
@@ -21,7 +23,9 @@ main = hadoopMain app (LocalRun def) RSReRun
 
 
 -- notice how path is a file
-source = tap "data/sample.csv" (csvProtocol def)
+source = do
+    t <- binaryDirTap "data" (== "data/sample.csv")
+    return t { proto = csvProtocol def . proto t }
 
 
 -- notice how path is a folder
@@ -50,7 +54,8 @@ reducer' = do
 
 app :: Controller ()
 app = do
-    connect mr1 [source] target (Just "Counting word frequency")
+    src <- source
+    connect mr1 [src] target (Just "Counting word frequency")
     connect mr2 [target] wordCountTarget (Just "Counting words")
 
 

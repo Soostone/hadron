@@ -80,31 +80,34 @@ path (LocalFile fp) = do
 -------------------------------------------------------------------------------
 localMapReduce
     :: MonadIO m
-    => String                   -- ^ MapReduceKey
+    => LocalRunSettings
+    -> String                   -- ^ MapReduceKey
     -> String                   -- ^ RunToken
     -> H.HadoopRunOpts
     -> EitherT String m ()
-localMapReduce mrKey token H.HadoopRunOpts{..} = do
+localMapReduce ls mrKey token H.HadoopRunOpts{..} = do
     exPath <- scriptIO getExecutablePath
     liftIO $ infoM "Hadron.Run.Local" $
       "Launching Hadoop job for MR key: " <> mrKey
 
 
-    expandedInput <- liftIO $ forM mrsInput $ \ inp -> do
-      chk <- doesDirectoryExist inp
-      case chk of
-        False -> return [inp]
+    expandedInput <- liftIO $ forM mrsInput $ \ inp ->
+      withLocalFile ls (LocalFile inp) $ \ fp -> do
+        chk <- doesDirectoryExist fp
+        case chk of
+          False -> return [fp]
+          True -> do
+            fs <- getDirectoryContents fp
+            return $ map (fp </>)
+                   $ filter (not . flip elem [".", ".."]) fs
+
+
+    outFile <- liftIO $ withLocalFile ls (LocalFile mrsOutput) $ \ fp ->
+      case fp ^. extension . to null of
+        False -> return fp
         True -> do
-          fs <- getDirectoryContents inp
-          return $ map (inp </>)
-                 $ filter (not . flip elem [".", ".."]) fs
-
-
-    outFile <- liftIO $ case mrsOutput ^. extension . to null of
-      False -> return mrsOutput
-      True -> do
-          createDirectoryIfMissing True mrsOutput
-          return $ mrsOutput </> "0000.out"
+          createDirectoryIfMissing True fp
+          return $ fp </> "0000.out"
 
 
     let infiles = intercalate " " $ concat expandedInput
@@ -146,14 +149,22 @@ hdfsDeletePath
     :: (MonadIO m, MonadReader LocalRunSettings m)
     => LocalFile
     -> m ()
-hdfsDeletePath p = liftIO . removeDirectoryRecursive =<< path p
+hdfsDeletePath p = do
+    fp <- path p
+    liftIO $ do
+      chk <- doesDirectoryExist fp
+      when chk (removeDirectoryRecursive fp)
+      chk2 <- doesFileExist fp
+      when chk2 (removeFile fp)
 
 
 -------------------------------------------------------------------------------
 hdfsLs
     :: (MonadIO m, MonadReader LocalRunSettings m)
     => LocalFile -> m [FilePath]
-hdfsLs p = liftIO . getDirectoryContents =<< path p
+hdfsLs p = do
+    fs <- liftIO . getDirectoryContents =<< path p
+    return $ map (_unLocalFile p </>) fs
 
 
 -------------------------------------------------------------------------------
@@ -202,6 +213,17 @@ randomFileName = (LocalFile . B.unpack) `liftM` liftIO (mkRNG >>= randomToken 64
 
 
 
-
+-------------------------------------------------------------------------------
+-- | Helper to work with relative paths using Haskell functions like
+-- 'readFile' and 'writeFile'.
+withLocalFile
+    :: MonadIO m
+    => LocalRunSettings
+    -> LocalFile
+    -- ^ A relative path in our working folder
+    -> (FilePath -> m b)
+    -- ^ What to do with the absolute path.
+    -> m b
+withLocalFile settings fp f = f =<< runLocal settings (path fp)
 
 
