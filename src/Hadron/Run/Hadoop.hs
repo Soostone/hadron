@@ -6,7 +6,7 @@
 
 -----------------------------------------------------------------------------
 -- |
--- Module      :  Hadron.Hadoop
+-- Module      :  Hadron.Run.Hadoop
 -- Copyright   :  Soostone Inc
 -- License     :  BSD3
 --
@@ -17,8 +17,9 @@
 ----------------------------------------------------------------------------
 
 
-module Hadron.Hadoop
+module Hadron.Run.Hadoop
     ( HadoopEnv (..)
+    , hsBin, hsJar
     , clouderaDemo
     , amazonEMR
 
@@ -33,10 +34,9 @@ module Hadron.Hadoop
     , Codec
     , gzipCodec
     , snappyCodec
-    , randomFilename
 
     -- * Hadoop Command Line Wrappers
-    , launchMapReduce
+    , hadoopMapReduce
     , hdfsFileExists
     , hdfsDeletePath
     , hdfsLs
@@ -48,6 +48,8 @@ module Hadron.Hadoop
     , hdfsLocalStream
     , hdfsLocalStreamMulti
     , hdfsChmod
+    , randomFilename
+
     ) where
 
 -------------------------------------------------------------------------------
@@ -82,25 +84,29 @@ import           Hadron.Logger
 
 
 data HadoopEnv = HadoopEnv {
-      hsBin :: String
-    , hsJar :: String
+      _hsBin :: String
+    , _hsJar :: String
     }
 
 
 -- | Settings for the cloudera demo VM.
 clouderaDemo :: HadoopEnv
 clouderaDemo = HadoopEnv {
-            hsBin = "hadoop"
-          , hsJar = "/usr/lib/hadoop-0.20-mapreduce/contrib/streaming/hadoop-streaming-2.0.0-mr1-cdh4.2.0.jar"
+            _hsBin = "hadoop"
+          , _hsJar = "/usr/lib/hadoop-0.20-mapreduce/contrib/streaming/hadoop-streaming-2.0.0-mr1-cdh4.2.0.jar"
           }
 
 
 -- | Settings for Amazon's EMR instances.
 amazonEMR :: HadoopEnv
 amazonEMR = HadoopEnv {
-              hsBin = "/home/hadoop/bin/hadoop"
-            , hsJar = "/home/hadoop/contrib/streaming/hadoop-streaming.jar"
+              _hsBin = "/home/hadoop/bin/hadoop"
+            , _hsJar = "/home/hadoop/contrib/streaming/hadoop-streaming.jar"
             }
+
+
+instance Default HadoopEnv where
+    def = clouderaDemo
 
 
 data PartitionStrategy
@@ -149,7 +155,7 @@ data HadoopRunOpts = HadoopRunOpts {
     , mrsNumMap     :: Maybe Int
     , mrsNumReduce  :: Maybe Int
     , mrsCombine    :: Bool
-    , mrsCompress   :: Maybe String
+    , mrsCompress   :: Maybe Codec
     , mrsOutSep     :: Maybe Char
     -- ^ A separator to be used in reduce output. It is sometimes
     -- useful to specify one to trick Hadoop.
@@ -186,14 +192,14 @@ type RunToken = String
 
 
 -------------------------------------------------------------------------------
-launchMapReduce
+hadoopMapReduce
     :: (MonadIO m)
     => HadoopEnv
     -> MapReduceKey
     -> RunToken
     -> HadoopRunOpts
     -> EitherT String m ()
-launchMapReduce HadoopEnv{..} mrKey runToken HadoopRunOpts{..} = do
+hadoopMapReduce HadoopEnv{..} mrKey runToken HadoopRunOpts{..} = do
     exec <- scriptIO getExecutablePath
     prog <- scriptIO getProgName
     liftIO $ infoM "Hadron.Hadoop" $ "Launching Hadoop job for MR key: " <> mrKey
@@ -202,7 +208,7 @@ launchMapReduce HadoopEnv{..} mrKey runToken HadoopRunOpts{..} = do
 
     liftIO . infoM "Hadron.Hadoop" $ "Hadoop arguments: " <> (intercalate " " args)
 
-    (code, out, eout) <- scriptIO $ readProcessWithExitCode hsBin args ""
+    (code, out, eout) <- scriptIO $ readProcessWithExitCode _hsBin args ""
     case code of
       ExitSuccess -> return ()
       e -> do
@@ -212,7 +218,7 @@ launchMapReduce HadoopEnv{..} mrKey runToken HadoopRunOpts{..} = do
         hoistEither $ Left $ "MR job failed with: " ++ show e
     where
       mkArgs exec prog =
-            [ "jar", hsJar] ++
+            [ "jar", _hsJar] ++
             comp ++ numMap ++ numRed ++ outSep ++ jobName ++
             comparator ++ part ++
             inputs ++
@@ -276,7 +282,7 @@ launchMapReduce HadoopEnv{..} mrKey runToken HadoopRunOpts{..} = do
 -- | Check if the target file is present.
 hdfsFileExists :: HadoopEnv -> FilePath -> IO Bool
 hdfsFileExists HadoopEnv{..} p = do
-    res <- rawSystem hsBin ["fs", "-stat", p]
+    res <- rawSystem _hsBin ["fs", "-stat", p]
     return $ case res of
       ExitSuccess -> True
       ExitFailure{} -> False
@@ -285,17 +291,18 @@ hdfsFileExists HadoopEnv{..} p = do
 
 -------------------------------------------------------------------------------
 -- | Check if the target file is present.
-hdfsDeletePath :: HadoopEnv -> FilePath -> IO ExitCode
-hdfsDeletePath HadoopEnv{..} p =
-    rawSystem hsBin ["fs", "-rmr", "-skipTrash", p]
+hdfsDeletePath :: HadoopEnv -> FilePath -> IO ()
+hdfsDeletePath HadoopEnv{..} p = void $
+    rawSystem _hsBin ["fs", "-rmr", "-skipTrash", p]
+
 
 
 
 -------------------------------------------------------------------------------
--- | Check if the target file is present.
+-- | List a directory's contents
 hdfsLs :: HadoopEnv -> FilePath -> IO [FilePath]
 hdfsLs HadoopEnv{..} p = do
-    (res,out,_) <- readProcessWithExitCode hsBin ["fs", "-lsr", p] ""
+    (res,out,_) <- readProcessWithExitCode _hsBin ["fs", "-lsr", p] ""
     return $ case res of
       ExitSuccess -> parseLS p out
       ExitFailure{} -> []
@@ -319,17 +326,17 @@ parseLS pat out = filter isOK $ map clean $ lines out
 
 
 -------------------------------------------------------------------------------
--- | Check if the target file is present.
-hdfsPut :: HadoopEnv -> FilePath -> FilePath -> IO ExitCode
-hdfsPut HadoopEnv{..} localPath hdfsPath =
-    rawSystem hsBin ["fs", "-put", localPath, hdfsPath]
+-- | Copy file from a location to a location
+hdfsPut :: HadoopEnv -> FilePath -> FilePath -> IO ()
+hdfsPut HadoopEnv{..} localPath hdfsPath = void $
+    rawSystem _hsBin ["fs", "-put", localPath, hdfsPath]
 
 
 
 -------------------------------------------------------------------------------
 -- | Create HDFS directory if missing
-hdfsMkdir :: HadoopEnv -> String -> IO ExitCode
-hdfsMkdir HadoopEnv{..} fp = rawSystem hsBin ["fs", "-mkdir", "-p", fp]
+hdfsMkdir :: HadoopEnv -> String -> IO ()
+hdfsMkdir HadoopEnv{..} fp = void $ rawSystem _hsBin ["fs", "-mkdir", "-p", fp]
 
 
 -------------------------------------------------------------------------------
@@ -341,7 +348,7 @@ hdfsChmod
     -> String
     -- ^ Permissions string
     -> IO ExitCode
-hdfsChmod HadoopEnv{..} fp mode = rawSystem hsBin ["fs", "-chmod", "-R", mode, fp]
+hdfsChmod HadoopEnv{..} fp mode = rawSystem _hsBin ["fs", "-chmod", "-R", mode, fp]
 
 
 -------------------------------------------------------------------------------
@@ -352,7 +359,7 @@ hdfsChmod HadoopEnv{..} fp mode = rawSystem hsBin ["fs", "-chmod", "-R", mode, f
 hdfsCat :: MonadIO m => HadoopEnv -> FilePath -> Producer m ByteString
 hdfsCat HadoopEnv{..} p = do
     (inH, outH, _, _) <- liftIO $ do
-      let cp = (proc hsBin ["fs", "-cat", p]) { std_in = CreatePipe
+      let cp = (proc _hsBin ["fs", "-cat", p]) { std_in = CreatePipe
                                               , std_out = CreatePipe
                                               , std_err = Inherit }
       createProcess cp
@@ -381,8 +388,8 @@ hdfsGet :: HadoopEnv -> FilePath -> IO FilePath
 hdfsGet HadoopEnv{..} p = do
     tmpFile <- randomFilename
     createDirectoryIfMissing True tmpRoot
-    -- rawSystem hsBin ["chmod", "a+rw", tmpRoot]
-    (res,out,e) <- readProcessWithExitCode hsBin ["fs", "-get", p, tmpFile]  ""
+    -- rawSystem _hsBin ["chmod", "a+rw", tmpRoot]
+    (res,out,e) <- readProcessWithExitCode _hsBin ["fs", "-get", p, tmpFile]  ""
     case res of
       ExitFailure i -> error $ "hdfsGet failed: " <> show i <> ".\n" <> out <> "\n" <> e
       ExitSuccess -> return tmpFile
@@ -409,7 +416,7 @@ hdfsLocalStreamMulti
     -> FilePath
     -- ^ Location / glob pattern
     -> (FilePath -> Bool)
-    -- ^ Fire filter based on name
+    -- ^ File filter based on name
     -> Source m ByteString
 hdfsLocalStreamMulti hs loc chk = do
     fs <- liftIO $ hdfsLs hs loc <&> filter chk
@@ -427,3 +434,7 @@ hdfsLocalStreamMulti hs loc chk = do
           removeFile local
 
 
+
+-------------------------------------------------------------------------------
+makeLenses ''HadoopEnv
+-------------------------------------------------------------------------------

@@ -41,6 +41,7 @@ import           Control.Category
 import           Control.Lens
 import           Control.Monad
 import           Control.Monad.Catch
+import           Control.Monad.Trans.Resource
 import           Data.Attoparsec.ByteString.Char8 (Parser, endOfLine, takeTill)
 import qualified Data.ByteString.Base64           as Base64
 import qualified Data.ByteString.Char8            as B
@@ -74,8 +75,8 @@ type Protocol' a = Protocol B.ByteString a
 --
 -- Most of the time we'll be using 'Protocol\''s.
 data Protocol b a = Protocol {
-      protoEnc :: Conduit a IO b
-    , protoDec :: Conduit b IO a
+      protoEnc :: Conduit a (ResourceT IO ) b
+    , protoDec :: Conduit b (ResourceT IO) a
     }
 
 

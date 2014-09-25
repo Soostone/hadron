@@ -16,10 +16,12 @@ library
   exposed-modules:     
     Hadron.Basic
     Hadron.Controller
-    Hadron.Hadoop
     Hadron.Join
     Hadron.Logger
     Hadron.Protocol
+    Hadron.Run
+    Hadron.Run.Hadoop
+    Hadron.Run.Local
     Hadron.Types
 
   build-depends:       

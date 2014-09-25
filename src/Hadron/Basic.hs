@@ -80,8 +80,8 @@ import           Prelude                      hiding (id, (.))
 import           System.Environment
 import           System.IO
 -------------------------------------------------------------------------------
-import           Hadron.Hadoop
 import           Hadron.Protocol
+import           Hadron.Run.Hadoop
 import           Hadron.Types
 -------------------------------------------------------------------------------
 
@@ -137,21 +137,19 @@ getFileName = liftIO $ getEnv "map_input_file"
 
 -- | Construct a mapper program using a given low-level conduit.
 mapper
-    :: (MonadIO m, PrimMonad base, MonadBase base m)
-    => Conduit B.ByteString m (CompositeKey, B.ByteString)
+    :: Conduit B.ByteString (ResourceT IO) (CompositeKey, B.ByteString)
     -- ^ A key/value producer - don't worry about putting any newline
     -- endings yourself, we do that for you.
-    -> m ()
+    -> IO ()
 mapper f = mapperWith id f
 
 
 -- | Construct a mapper program using given serialization Prism.
 mapperWith
-    :: (MonadIO m, PrimMonad base, MonadBase base m)
-    => Prism' B.ByteString t
-    -> Conduit B.ByteString m (CompositeKey, t)
-    -> m ()
-mapperWith p f = do
+    :: Prism' B.ByteString t
+    -> Conduit B.ByteString (ResourceT IO) (CompositeKey, t)
+    -> IO ()
+mapperWith p f = runResourceT $ do
     setLineBuffering
     sourceHandle stdin $=
       f $=
@@ -160,12 +158,11 @@ mapperWith p f = do
 
 
 combiner
-    :: (MonadBase base m, PrimMonad base, MonadIO m, MonadThrow m)
-    => MROptions
+    :: MROptions
     -> Prism' B.ByteString b
-    -> Conduit (CompositeKey, b) m (CompositeKey, b)
-    -> m ()
-combiner mro mrInPrism f  = do
+    -> Conduit (CompositeKey, b) (ResourceT IO) (CompositeKey, b)
+    -> IO ()
+combiner mro mrInPrism f  = runResourceT $ do
     setLineBuffering
     sourceHandle stdin =$=
       decodeReducerInput mro mrInPrism =$=
@@ -185,7 +182,7 @@ reducerMain
     -- (your responsibility) with a newline, therefore constituting a
     -- line for the Hadoop ecosystem.
     -> IO ()
-reducerMain mro@MROptions{..} mrInPrism g =
+reducerMain mro@MROptions{..} mrInPrism g = runResourceT $
     reducer mro mrInPrism g $=
     C.mapM_ emitOutput $$
     C.sinkNull
@@ -238,7 +235,7 @@ reducer
     -- ^ Input conversion function
     -> Reducer CompositeKey a B.ByteString
     -- ^ A step function for the given key.
-    -> Source IO B.ByteString
+    -> Source (ResourceT IO) B.ByteString
 reducer mro@MROptions{..} mrInPrism f = do
     setLineBuffering
     sourceHandle stdin =$=

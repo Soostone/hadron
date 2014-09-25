@@ -25,18 +25,19 @@ module Hadron.Join
 
 -------------------------------------------------------------------------------
 import           Control.Lens
-import qualified Data.ByteString.Char8 as B
+import           Control.Monad.Trans.Resource
+import qualified Data.ByteString.Char8        as B
 import           Data.Conduit
-import qualified Data.Conduit.List     as C
+import qualified Data.Conduit.List            as C
 import           Data.Default
 import           Data.Hashable
-import qualified Data.HashMap.Strict   as HM
+import qualified Data.HashMap.Strict          as HM
 import           Data.List
 import           Data.Monoid
 import           Data.Ord
 import           Data.Serialize
 import           Data.String
-import qualified Data.Vector           as V
+import qualified Data.Vector                  as V
 import           GHC.Generics
 -------------------------------------------------------------------------------
 import           Hadron.Basic
@@ -202,7 +203,7 @@ joinReduceStep _ str@Streaming{} (_,x) = emitStream str x >> return str
 joinMapper
     :: (String -> DataSet)
     -- ^ Infer dataset from current filename
-    -> (DataSet -> Conduit a IO (CompositeKey, r))
+    -> (DataSet -> Conduit a (ResourceT IO) (CompositeKey, r))
     -- ^ Given a dataset, map it to a common data type
     -> Mapper a CompositeKey r
 joinMapper getDS mkMap = do
@@ -230,7 +231,7 @@ joinMain
     -- ^ Define your tables
     -> (String -> DataSet)
     -- ^ Infer dataset from input filename
-    -> (DataSet -> Conduit B.ByteString IO (CompositeKey, r))
+    -> (DataSet -> Conduit B.ByteString (ResourceT IO) (CompositeKey, r))
     -- ^ Map input stream to a join key and the common-denominator
     -- uniform data type we know how to 'mconcat'.
     -> Prism' B.ByteString r

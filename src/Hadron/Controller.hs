@@ -115,32 +115,34 @@ import           Control.Exception.Lens
 import           Control.Lens
 import           Control.Monad.Catch
 import           Control.Monad.Morph
-import           Control.Monad.Operational hiding (view)
-import qualified Control.Monad.Operational as O
+import           Control.Monad.Operational    hiding (view)
+import qualified Control.Monad.Operational    as O
 import           Control.Monad.State
-import qualified Data.ByteString.Char8     as B
-import           Data.ByteString.Search    as B
-import           Data.Conduit              as C
-import qualified Data.Conduit.List         as C
+import           Control.Monad.Trans.Resource
+import qualified Data.ByteString.Char8        as B
+import           Data.ByteString.Search       as B
+import           Data.Conduit                 as C
+import qualified Data.Conduit.List            as C
 import           Data.Conduit.Zlib
 import           Data.Default
 import           Data.List
-import qualified Data.Map                  as M
+import qualified Data.Map                     as M
 import           Data.Monoid
 import           Data.RNG
 import           Data.Serialize
-import qualified Data.Text                 as T
+import qualified Data.Text                    as T
 import           Data.Text.Encoding
 import           System.Directory
 import           System.Environment
 import           System.FilePath
+import           System.FilePath.Lens
 
 -------------------------------------------------------------------------------
-import           Hadron.Basic              hiding (mapReduce)
-import           Hadron.Hadoop
+import           Hadron.Basic                 hiding (mapReduce)
 import           Hadron.Join
 import           Hadron.Logger
 import           Hadron.Protocol
+import           Hadron.Run
 import           Hadron.Types
 -------------------------------------------------------------------------------
 
@@ -248,13 +250,13 @@ instance (Serialize a, Serialize b, Serialize c, Serialize d, Serialize e, Seria
 
 -------------------------------------------------------------------------------
 -- | Do something with m-r output before writing it to a tap.
-(>.>) :: MapReduce a b -> Conduit b IO c -> MapReduce a c
+(>.>) :: MapReduce a b -> Conduit b (ResourceT IO) c -> MapReduce a c
 (MapReduce o p m c r) >.> f = MapReduce o p m c (r =$= f)
 
 
 -------------------------------------------------------------------------------
 -- | Dome something with the m-r input before starting the map stage.
-(<.<) :: Conduit c IO a -> MapReduce a b -> MapReduce c b
+(<.<) :: Conduit c (ResourceT IO) a -> MapReduce a b -> MapReduce c b
 f <.< (MapReduce o p m c r) = MapReduce o p (f =$= m) c r
 
 -------------------------------------------------------------------------------
@@ -268,7 +270,7 @@ data MapReduce a b = forall k v. MRKey k => MapReduce {
     -- ^ A serialization scheme for values between the map-reduce
     -- steps.
     , _mrMapper   :: Mapper a k v
-    , _mrCombiner :: Maybe (Conduit (k,v) IO (k, v))
+    , _mrCombiner :: Maybe (Conduit (k,v) (ResourceT IO) (k, v))
     , _mrReducer  :: Reducer k v b
     }
 
@@ -309,7 +311,7 @@ taps fp p = Tap fp p
 
 ------------------------------------------------------------------------------
 -- | Conduit that takes in hdfs filenames and outputs the file contents.
-readHdfsFile :: HadoopEnv -> Conduit B.ByteString IO B.ByteString
+readHdfsFile :: RunContext -> Conduit B.ByteString (ResourceT IO) B.ByteString
 readHdfsFile settings = awaitForever $ \s3Uri -> do
     let uriStr = B.unpack s3Uri
         getFile = hdfsLocalStream settings uriStr
@@ -324,7 +326,7 @@ readHdfsFile settings = awaitForever $ \s3Uri -> do
 -- limitation by instead making your input a list of file paths that contain
 -- binary data.  Then the file names get split by hadoop and each map job
 -- reads from those files as its first step.
-fileListTap :: HadoopEnv
+fileListTap :: RunContext
             -> FilePath
             -- ^ A file containing a list of files to be used as input
             -> Tap B.ByteString
@@ -457,9 +459,9 @@ newMRKey = do
 -- | Grab list of files in destination, write into a file, put file on
 -- HDFS so it is shared and return the local/HDFS path, they are the
 -- same, as output.
-setupBinaryDir :: HadoopEnv -> FilePath -> (FilePath -> Bool) -> IO FilePath
+setupBinaryDir :: RunContext -> FilePath -> (FilePath -> Bool) -> IO FilePath
 setupBinaryDir settings loc chk = do
-    localFile <- randomFilename
+    localFile <- hdfsRandomFilename settings
     let root = dropFileName localFile
     createDirectoryIfMissing True root
     hdfsMkdir settings root
@@ -486,12 +488,13 @@ pickId = do
     return curId
 
 
+
 -------------------------------------------------------------------------------
 -- | Interpreter for the central job control process
 orchestrate
     :: (MonadIO m)
     => Controller a
-    -> HadoopEnv
+    -> RunContext
     -> RerunStrategy
     -> ContState
     -> m (Either String a)
@@ -507,7 +510,7 @@ orchestrate (Controller p) settings rr s = evalStateT (runEitherT (go p)) s
       eval' (ConIO f) = liftIO f
 
       eval' (MakeTap proto) = do
-          loc <- liftIO randomFilename
+          loc <- liftIO $ hdfsRandomFilename settings
 
           curId <- pickId
           tapLens curId .= Just (B.pack loc)
@@ -555,9 +558,9 @@ orchestrate (Controller p) settings rr s = evalStateT (runEitherT (go p)) s
               -- serialize current state to HDFS, to be read by
               -- individual mappers reducers of this step.
               runToken <- liftIO $ (mkRNG >>= randomToken 64) <&> B.unpack
-              let fn = tmpRoot <> runToken
+              fn <- liftIO $ mkTempFilePath settings runToken
               st <- use csMRVars
-              liftIO $ createDirectoryIfMissing True tmpRoot
+              liftIO $ createDirectoryIfMissing True (fn ^. directory)
               liftIO $ writeFile fn (show st)
               liftIO $ hdfsPut settings fn fn
 
@@ -612,7 +615,7 @@ hadoopMain
     :: forall m a. (MonadThrow m, MonadIO m)
     => Controller a
     -- ^ The Hadoop streaming application to run.
-    -> HadoopEnv
+    -> RunContext
     -- ^ Hadoop environment info.
     -> RerunStrategy
     -- ^ What to do if destination files already exist.
@@ -630,14 +633,14 @@ hadoopMain cont@(Controller p) hs rr = do
       _ -> error "Usage: No arguments for job control or a phase name."
     where
 
-      mkArgs mrKey = [ (Map, "map_" ++ mrKey)
-                     , (Reduce, "reduce_" ++ mrKey)
-                     , (Combine, "combine_" ++ mrKey) ]
+      mkArgs mrKey = [ (Map, "mapper_" ++ mrKey)
+                     , (Reduce, "reducer_" ++ mrKey)
+                     , (Combine, "combiner_" ++ mrKey) ]
 
 
       -- load controller varibles back up
       loadState runToken = do
-          let fn = tmpRoot <> runToken
+          fn <- mkTempFilePath hs runToken
           tmp <- liftIO $ hdfsGet hs fn
           st <- liftIO $ readFile tmp <&> read
           csMRVars %= M.union st
@@ -849,7 +852,7 @@ mapReduce mp rd a0 = MapReduce mro pSerialize m  Nothing r
       mro = def { _mroPart = Partition n n }
 
       m :: Mapper a k v
-      m = awaitForever $ \ a -> runMaybeT $ hoist lift (mp a) >>= lift . C.sourceList
+      m = awaitForever $ \ a -> runMaybeT $ hoist (lift . lift) (mp a) >>= lift . C.sourceList
 
       r :: Reducer k v (k,b)
       r = do
@@ -860,7 +863,7 @@ mapReduce mp rd a0 = MapReduce mro pSerialize m  Nothing r
 
 
       step (_, acc) (k, v) = do
-          !b <- rd k acc v
+          !b <- liftIO $ rd k acc v
           return (Just k, b)
 
 
@@ -902,10 +905,11 @@ mapMR f = MapReduce def pSerialize mp Nothing rd
 -- | Do somthing with only the first row we see, putting the result in
 -- the given HDFS destination.
 oneSnap
-    :: FilePath
+    :: RunContext
+    -> FilePath
     -> (a -> B.ByteString)
     -> Conduit a IO a
-oneSnap s3fp f = do
+oneSnap settings s3fp f = do
     h <- await
     case h of
       Nothing -> return ()
@@ -915,10 +919,10 @@ oneSnap s3fp f = do
           awaitForever yield
   where
     putHeaders x = do
-        tmp <- randomFilename
+        tmp <- hdfsRandomFilename settings
         B.writeFile tmp x
-        chk <- hdfsFileExists amazonEMR s3fp
-        when (not chk) $ hdfsPut amazonEMR tmp s3fp >> return ()
+        chk <- hdfsFileExists settings s3fp
+        when (not chk) $ hdfsPut settings tmp s3fp >> return ()
         removeFile tmp
 
 
@@ -934,7 +938,7 @@ oneSnap s3fp f = do
 -- to care.
 joinMR
     :: forall a b k v. (MRKey k, Monoid v, Serialize v)
-    => Conduit (Either a b) IO (k, Either v v)
+    => Conduit (Either a b) (ResourceT IO) (k, Either v v)
     -- ^ Mapper for the input
     -> MapReduce (Either a b) v
 joinMR mp = MapReduce mro pSerialize mp' Nothing (go [])
@@ -945,7 +949,7 @@ joinMR mp = MapReduce mro pSerialize mp' Nothing (go [])
       -- add to key so we know for sure all Lefts arrive before
       -- Rights.
 
-      mp' :: Conduit (Either a b) IO (CompositeKey, Either v v)
+      mp' :: Conduit (Either a b) (ResourceT IO) (CompositeKey, Either v v)
       mp' = mp =$= C.map modMap
 
       modMap (k, Left v) = (toCompKey k ++ ["1"], Left v)
