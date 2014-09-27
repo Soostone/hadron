@@ -56,6 +56,7 @@ module Hadron.Run
     , L.LocalFile (..)
     , L.randomFileName
     , withLocalFile
+    , withRandomLocalFile
 
     ) where
 
@@ -154,7 +155,7 @@ hdfsCat
     -> Producer (ResourceT IO) B.ByteString
 hdfsCat env fp = case env of
     LocalRun env -> hoist (hoist (L.runLocal env)) (L.hdfsCat (LocalFile fp))
-    HadoopRun env _ -> H.hdfsCat env fp
+    HadoopRun{} -> hdfsLocalStream env fp
 
 
 -------------------------------------------------------------------------------
@@ -238,4 +239,12 @@ hdfsTempFilePath env fp = case env of
 withLocalFile
   :: MonadIO m => RunContext -> LocalFile -> (FilePath -> m b) -> m b
 withLocalFile rs fp f = L.withLocalFile (lset rs) fp f
+
+
+-------------------------------------------------------------------------------
+withRandomLocalFile :: MonadIO m => RunContext -> (FilePath -> m b) -> m LocalFile
+withRandomLocalFile rc f = do
+    fp <- randomLocalFile
+    withLocalFile rc fp f
+    return fp
 

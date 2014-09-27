@@ -61,6 +61,7 @@ module Hadron.Controller
     , binaryDirTap
     , setupBinaryDir
     , fileListTap
+    , readTap
     , readHdfsFile
 
     -- * Command Line Entry Point
@@ -303,6 +304,18 @@ tap fp p = Tap [fp] p
 
 taps :: [FilePath] -> Protocol' a -> Tap a
 taps fp p = Tap fp p
+
+
+-------------------------------------------------------------------------------
+-- | Given a tap directory, enumerate and load all files inside.
+-- Caution: This is meant only as a way to load small files, or else
+-- you'll fill up your memory.
+readTap :: RunContext -> Tap a -> ResourceT IO [a]
+readTap rc t = do
+    fs <- liftIO $ concat <$> forM (location t) (hdfsLs rc)
+    inp fs =$= (protoDec . proto) t $$ C.consume
+    where
+      inp fs = forM_ fs (hdfsCat rc)
 
 
 ------------------------------------------------------------------------------
