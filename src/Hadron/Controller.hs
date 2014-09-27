@@ -39,6 +39,8 @@ module Hadron.Controller
     , connect
     , connect'
     , io
+    , orchIO
+    , nodeIO
     , setVal
     , getVal
 
@@ -370,10 +372,22 @@ data ConI a where
             -> [Tap i] -> Tap o
             -> Maybe String
             -> ConI ()
+
     MakeTap :: Protocol' a -> ConI (Tap a)
+
     BinaryDirTap :: FilePath -> (FilePath -> Bool) -> ConI (Tap B.ByteString)
+
     ConIO :: IO a -> ConI a
+    -- ^ General IO action; both orchestrator and nodes perform the action
+
+    OrchIO :: IO a -> ConI ()
+    -- ^ Only the orchestrator performs action
+
+    NodeIO :: IO a -> ConI a
+    -- ^ Only the nodes perform action
+
     SetVal :: String -> B.ByteString -> ConI ()
+
     GetVal :: String -> ConI (Maybe B.ByteString)
 
 
@@ -445,15 +459,22 @@ binaryDirTap
 binaryDirTap loc filt = Controller $ singleton $ BinaryDirTap loc filt
 
 
--- | LIft IO into 'Controller'. Note that this is a NOOP for when the
--- Mappers/Reducers are running; it only executes in the main
--- controller application during job-flow orchestration.
---
--- If you try to construct a 'MapReduce' step that depends on the
--- result of an 'io' call, you'll get a runtime error when running
--- your job.
+-------------------------------------------------------------------------------
+-- | Perform an IO operation both on the orchestrator and on the worker nodes.
 io :: IO a -> Controller a
 io f = Controller $ singleton $ ConIO f
+
+
+-------------------------------------------------------------------------------
+-- | Perform an IO operation only on the orchestrator
+orchIO :: IO a -> Controller ()
+orchIO = Controller . singleton . OrchIO
+
+
+-------------------------------------------------------------------------------
+-- | Perform an IO operation only on the worker nodes.
+nodeIO :: IO a -> Controller a
+nodeIO = Controller . singleton . NodeIO
 
 
 -------------------------------------------------------------------------------
@@ -526,6 +547,10 @@ orchestrate (Controller p) settings rr s = do
 
       eval' (ConIO f) = liftIO f
 
+      eval' (OrchIO f) = void $ liftIO f
+
+      eval' (NodeIO _) = return (error "NodeIO can't be used in the orchestrator decision path")
+
       eval' (MakeTap proto) = do
           loc <- liftIO $ randomRemoteFile settings
 
@@ -574,6 +599,8 @@ orchestrate (Controller p) settings rr s = do
                           head (location outp)
                         _ <- liftIO $ mapM_ (hdfsDeletePath settings) (location outp)
                         go'' mrKey
+
+                        liftIO $ infoM "Hadron.Controller" ("MR job complete: " ++ show mrKey)
 
 
             go'' mrKey = do
@@ -682,6 +709,10 @@ hadoopMain cont@(Controller p) settings rr = do
       go :: String -> String -> ConI b -> StateT ContState m b
 
       go _ _ (ConIO f) = liftIO f
+
+      go _ _ (OrchIO _) = return ()
+
+      go _ _ (NodeIO f) = liftIO f
 
       go _ _ (MakeTap proto) = do
           curId <- pickId

@@ -166,9 +166,18 @@ hdfsLs
     :: (MonadIO m, MonadReader LocalRunSettings m)
     => LocalFile -> m [FilePath]
 hdfsLs p = do
-    fs <- liftIO . getDirectoryContents =<< path p
+    fs <- liftIO . getDirectoryContents' =<< path p
     return $ map (_unLocalFile p </>) fs
 
+
+-------------------------------------------------------------------------------
+-- | A version that return [] instead of an error when directory does not exit.
+getDirectoryContents' :: FilePath -> IO [FilePath]
+getDirectoryContents' fp = do
+    chk <- doesDirectoryExist fp
+    case chk of
+      False -> return []
+      True -> getDirectoryContents fp
 
 -------------------------------------------------------------------------------
 hdfsPut
