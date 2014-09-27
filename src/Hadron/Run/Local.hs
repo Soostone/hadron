@@ -21,6 +21,7 @@
 module Hadron.Run.Local where
 
 -------------------------------------------------------------------------------
+import           Control.Applicative
 import           Control.Error
 import           Control.Lens
 import           Control.Monad.Reader
@@ -141,7 +142,9 @@ hdfsFileExists
     :: (MonadIO m, MonadReader LocalRunSettings m)
     => LocalFile
     -> m Bool
-hdfsFileExists p = liftIO . doesFileExist =<< path p
+hdfsFileExists p = liftIO . chk =<< path p
+    where
+      chk fp = (||) <$> doesFileExist fp <*> doesDirectoryExist fp
 
 
 -------------------------------------------------------------------------------
