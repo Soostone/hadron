@@ -115,7 +115,7 @@ localMapReduce ls mrKey token H.HadoopRunOpts{..} = do
 
         command = "cat " <> infiles <> " | " <>
           exPath <> " " <> token <> " " <> "mapper_" <> mrKey <> " | " <>
-          "sort" <> " | " <>
+          "sort -t$'\t' -k1" <> " | " <>
           exPath <> " " <> token <> " " <> "reducer_" <> mrKey <>
           " > " <> outFile
 
