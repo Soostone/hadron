@@ -54,6 +54,7 @@ module Hadron.Controller
     , MRKey (..)
     , CompositeKey
     , SingleKey (..)
+    , WrapSerialize (..)
 
     -- * Data Sources
     , Tap (..)
@@ -131,10 +132,13 @@ import           Data.RNG
 import           Data.Serialize
 import qualified Data.Text                    as T
 import           Data.Text.Encoding
+import           Data.Time
 import           System.Directory
 import           System.Environment
 import           System.FilePath.Lens
 import           System.IO
+import           System.Locale
+import           Text.Parsec
 -------------------------------------------------------------------------------
 import           Hadron.Basic                 hiding (mapReduce)
 import           Hadron.Join
@@ -148,99 +152,155 @@ import           Hadron.Types
 newtype SingleKey a = SingleKey { unKey :: a }
     deriving (Eq,Show,Read,Ord,Serialize)
 
+newtype WrapSerialize a = WS { _getSerialized :: a }
+    deriving (Eq,Show,Read,Ord,Serialize)
 
-mrKeyError :: Int -> Int -> a
-mrKeyError i n =
-    error $ "Expected MapReduce key to have "
-         <> show i <> " parts. Instead received "
-         <> show n <> " parts."
+-- mrKeyError :: Int -> Int -> a
+-- mrKeyError i n =
+--     error $ "Expected MapReduce key to have "
+--          <> show i <> " parts. Instead received "
+--          <> show n <> " parts."
+
+
+type Parser = Parsec [B.ByteString] ()
+
+
+keyToken :: Parser B.ByteString
+keyToken = tokenPrim B.unpack (\pos _ _ -> incSourceColumn pos 1) Just
+
+
+fromCompKey :: MRKey a => [B.ByteString] -> Either ParseError a
+fromCompKey s = runParser keyParser () "Key Input" s
+
 
 class MRKey k where
     toCompKey :: k -> CompositeKey
-    fromCompKey :: CompositeKey -> Maybe k
+    keyParser :: Parser k
     numKeys :: k -> Int
+
+instance MRKey ()  where
+    toCompKey _ = [""]
+    keyParser = keyToken >> return ()
+    numKeys _ = 1
 
 instance MRKey B.ByteString where
     toCompKey k = [k]
-    fromCompKey [k] = Just k
-    fromCompKey xs  = mrKeyError 1 (length xs)
+    keyParser = keyToken
     numKeys _ = 1
 
 instance MRKey CompositeKey where
     toCompKey ks = ks
-    fromCompKey ks = Just ks
+    keyParser = many1 keyToken
     numKeys ks = length ks
 
 instance MRKey String where
     toCompKey = toCompKey . B.pack
-    fromCompKey = fmap B.unpack . fromCompKey
+    keyParser = B.unpack <$> keyToken
     numKeys _ = 1
-
 
 instance MRKey T.Text where
     toCompKey = toCompKey . encodeUtf8
-    fromCompKey = fmap decodeUtf8 . fromCompKey
+    keyParser = decodeUtf8 <$> keyToken
     numKeys _ = 1
 
-
-instance Serialize a => MRKey (SingleKey a) where
-    toCompKey a = [review pSerialize a]
-    fromCompKey [a] = preview pSerialize a
-    fromCompKey xs  = mrKeyError 1 (length xs)
+instance Serialize a => MRKey (WrapSerialize a) where
+    toCompKey = toCompKey . encode . _getSerialized
+    keyParser = do
+        a <- decode <$> keyParser
+        either fail (return . WS) a
     numKeys _ = 1
 
+utcFormat :: String
+utcFormat = "%Y-%m-%d %H:%M:%S.%q"
 
-instance (Serialize a, Serialize b) => MRKey (a,b) where
-    toCompKey (a,b) = [review pSerialize a, review pSerialize b]
-    fromCompKey [a,b] = (,) <$> preview pSerialize a <*> preview pSerialize b
-    fromCompKey xs  = mrKeyError 2 (length xs)
-    numKeys _ = 2
+instance MRKey UTCTime where
+    toCompKey = toCompKey . formatTime defaultTimeLocale utcFormat
+    keyParser = do
+        res <- parseTime defaultTimeLocale utcFormat <$> keyParser
+        maybe (fail "Can't parse value as UTCTime") return res
+    numKeys _ = 1
 
-instance (Serialize a, Serialize b, Serialize c) => MRKey (a,b,c) where
-    toCompKey (a,b,c) = [review pSerialize a, review pSerialize b, review pSerialize c]
-    fromCompKey [a,b,c] = (,,)
-        <$> preview pSerialize a
-        <*> preview pSerialize b
-        <*> preview pSerialize c
-    fromCompKey xs  = mrKeyError 3 (length xs)
-    numKeys _ = 3
+instance (MRKey a, MRKey b) => MRKey (a,b) where
+    toCompKey (a,b) = toCompKey a ++ toCompKey b
+    keyParser = (,) <$> keyParser <*> keyParser
+    numKeys (a,b) = numKeys a + numKeys b
 
-instance (Serialize a, Serialize b, Serialize c, Serialize d) => MRKey (a,b,c,d) where
-    toCompKey (a,b,c,d) = [review pSerialize a, review pSerialize b, review pSerialize c, review pSerialize d]
-    fromCompKey [a,b,c,d] = (,,,)
-        <$> preview pSerialize a
-        <*> preview pSerialize b
-        <*> preview pSerialize c
-        <*> preview pSerialize d
-    fromCompKey xs  = mrKeyError 4 (length xs)
-    numKeys _ = 4
+instance (MRKey a, MRKey b, MRKey c) => MRKey (a,b,c) where
+    toCompKey (a,b,c) = toCompKey a ++ toCompKey b ++ toCompKey c
+    keyParser = (,,) <$> keyParser <*> keyParser <*> keyParser
+    numKeys (a,b,c) = numKeys a + numKeys b + numKeys c
 
-instance (Serialize a, Serialize b, Serialize c, Serialize d, Serialize e) => MRKey (a,b,c,d,e) where
-    toCompKey (a,b,c,d,e) =
-        [ review pSerialize a, review pSerialize b, review pSerialize c
-        , review pSerialize d, review pSerialize e ]
-    fromCompKey [a,b,c,d,e] = (,,,,)
-        <$> preview pSerialize a
-        <*> preview pSerialize b
-        <*> preview pSerialize c
-        <*> preview pSerialize d
-        <*> preview pSerialize e
-    fromCompKey xs  = mrKeyError 5 (length xs)
-    numKeys _ = 5
+instance (MRKey a, MRKey b, MRKey c, MRKey d) => MRKey (a,b,c,d) where
+    toCompKey (a,b,c,d) = toCompKey a ++ toCompKey b ++ toCompKey c ++ toCompKey d
+    keyParser = (,,,) <$> keyParser <*> keyParser <*> keyParser <*> keyParser
+    numKeys (a,b,c,d) = numKeys a + numKeys b + numKeys c + numKeys d
 
-instance (Serialize a, Serialize b, Serialize c, Serialize d, Serialize e, Serialize f) => MRKey (a,b,c,d,e,f) where
-    toCompKey (a,b,c,d,e,f) =
-        [ review pSerialize a, review pSerialize b, review pSerialize c
-        , review pSerialize d, review pSerialize e, review pSerialize f]
-    fromCompKey [a,b,c,d,e,f] = (,,,,,)
-        <$> preview pSerialize a
-        <*> preview pSerialize b
-        <*> preview pSerialize c
-        <*> preview pSerialize d
-        <*> preview pSerialize e
-        <*> preview pSerialize f
-    fromCompKey xs  = mrKeyError 6 (length xs)
-    numKeys _ = 6
+-- instance (MRKey a, MRKey b) => MRKey (a,b) where
+--     toCompKey (a,b) = toCompKey a ++ toCompKey b
+--     fromCompKey xs = (,) <$> fromCompKey na <*> fromCompKey nb
+--         where
+--           (na, nb) = splitAt (numKeys (undefined :: a)) xs
+
+--     numKeys (a,b) = numKeys a + numKeys b
+
+-- instance Serialize a => MRKey (SingleKey a) where
+--     toCompKey a = [review pSerialize a]
+--     fromCompKey [a] = preview pSerialize a
+--     fromCompKey xs  = mrKeyError 1 (length xs)
+--     numKeys _ = 1
+
+
+-- instance (Serialize a, Serialize b) => MRKey (a,b) where
+--     toCompKey (a,b) = [review pSerialize a, review pSerialize b]
+--     fromCompKey [a,b] = (,) <$> preview pSerialize a <*> preview pSerialize b
+--     fromCompKey xs  = mrKeyError 2 (length xs)
+--     numKeys _ = 2
+
+-- instance (Serialize a, Serialize b, Serialize c) => MRKey (a,b,c) where
+--     toCompKey (a,b,c) = [review pSerialize a, review pSerialize b, review pSerialize c]
+--     fromCompKey [a,b,c] = (,,)
+--         <$> preview pSerialize a
+--         <*> preview pSerialize b
+--         <*> preview pSerialize c
+--     fromCompKey xs  = mrKeyError 3 (length xs)
+--     numKeys _ = 3
+
+-- instance (Serialize a, Serialize b, Serialize c, Serialize d) => MRKey (a,b,c,d) where
+--     toCompKey (a,b,c,d) = [review pSerialize a, review pSerialize b, review pSerialize c, review pSerialize d]
+--     fromCompKey [a,b,c,d] = (,,,)
+--         <$> preview pSerialize a
+--         <*> preview pSerialize b
+--         <*> preview pSerialize c
+--         <*> preview pSerialize d
+--     fromCompKey xs  = mrKeyError 4 (length xs)
+--     numKeys _ = 4
+
+-- instance (Serialize a, Serialize b, Serialize c, Serialize d, Serialize e) => MRKey (a,b,c,d,e) where
+--     toCompKey (a,b,c,d,e) =
+--         [ review pSerialize a, review pSerialize b, review pSerialize c
+--         , review pSerialize d, review pSerialize e ]
+--     fromCompKey [a,b,c,d,e] = (,,,,)
+--         <$> preview pSerialize a
+--         <*> preview pSerialize b
+--         <*> preview pSerialize c
+--         <*> preview pSerialize d
+--         <*> preview pSerialize e
+--     fromCompKey xs  = mrKeyError 5 (length xs)
+--     numKeys _ = 5
+
+-- instance (Serialize a, Serialize b, Serialize c, Serialize d, Serialize e, Serialize f) => MRKey (a,b,c,d,e,f) where
+--     toCompKey (a,b,c,d,e,f) =
+--         [ review pSerialize a, review pSerialize b, review pSerialize c
+--         , review pSerialize d, review pSerialize e, review pSerialize f]
+--     fromCompKey [a,b,c,d,e,f] = (,,,,,)
+--         <$> preview pSerialize a
+--         <*> preview pSerialize b
+--         <*> preview pSerialize c
+--         <*> preview pSerialize d
+--         <*> preview pSerialize e
+--         <*> preview pSerialize f
+--     fromCompKey xs  = mrKeyError 6 (length xs)
+--     numKeys _ = 6
 
 
 
@@ -656,7 +716,7 @@ decodeKey :: (Monad m, MRKey k) => Conduit (CompositeKey, v) m (k, v)
 decodeKey = C.mapMaybe go
     where
       go (k,v) = do
-          !k' <- fromCompKey k
+          !k' <- hush $ fromCompKey k
           return (k', v)
 
 
@@ -770,7 +830,7 @@ workNode settings (Controller p) runToken arg = flip evalStateT def $ do
 
               red = do
                   let conv (k,v) = do
-                          !k' <- fromCompKey k
+                          !k' <- hush $ fromCompKey k
                           return (k', v)
                       rd' = C.mapMaybe conv =$= rd =$= enc
                   liftIO $ (reducerMain mro mrInPrism rd')
