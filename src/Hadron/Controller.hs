@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns               #-}
+{-# LANGUAGE DeriveDataTypeable         #-}
 {-# LANGUAGE DeriveFunctor              #-}
 {-# LANGUAGE EmptyDataDecls             #-}
 {-# LANGUAGE ExistentialQuantification  #-}
@@ -133,6 +134,7 @@ import           Data.Serialize
 import qualified Data.Text                    as T
 import           Data.Text.Encoding
 import           Data.Time
+import           Data.Typeable
 import           System.Directory
 import           System.Environment
 import           System.FilePath.Lens
@@ -724,6 +726,17 @@ encodeKey :: (Monad m , MRKey k) => Conduit (k, v) m (CompositeKey, v)
 encodeKey = C.map (first toCompKey)
 
 
+
+data NodeError
+    = NodeRunComplete
+    -- ^ Single short circuiting in node workers; map/reduce/combine
+    -- has been completed.
+    deriving (Eq,Show,Read,Ord,Typeable)
+makePrisms ''NodeError
+
+instance Exception NodeError
+
+
 -------------------------------------------------------------------------------
 -- | The main entry point. Use this function to produce a command line
 -- program that encapsulates everything.
@@ -776,16 +789,29 @@ loadState settings runToken = do
 -- In this mode, the objective is to find the mapper, combiner or the
 -- reducer that we are supposed to be executing as.
 workNode
-    :: forall m a. (MonadIO m, MonadThrow m, MonadMask m)
+    :: forall m a. (MonadIO m, MonadThrow m, MonadMask m, Functor m)
     => RunContext
     -> Controller a
     -> String
     -> String
-    -> m a
-workNode settings (Controller p) runToken arg = flip evalStateT def $ do
-    loadState settings runToken
-    interpretWithMonad go p
+    -> m ()
+workNode settings (Controller p) runToken arg = do
+    handling (exception._NodeRunComplete) (const $ return ()) $ do
+      void $ flip evalStateT def $ do
+        loadState settings runToken
+        interpretWithMonad go' p
   where
+
+      -- A short-circuiting wrapper for go. We hijack the exception
+      -- system to implement shortcircuting here. It may be a better
+      -- idea to use ContT.
+      go' :: ConI b -> StateT ContState m b
+      go' c = do
+          chk <- use csShortCircuit
+          case chk of
+            True -> throwM NodeRunComplete
+            False -> go c
+
       go :: ConI b -> StateT ContState m b
 
       go (ConIO f) = liftIO f
@@ -858,7 +884,6 @@ workNode settings (Controller p) runToken arg = flip evalStateT def $ do
               liftIO $ do
                 curFile <- getFileName
                 catching exception mp' (mkErr (Just curFile) "mapper")
-
               csShortCircuit .= True
 
 
