@@ -133,8 +133,7 @@ import qualified Data.Text                    as T
 import           Data.Text.Encoding
 import           System.Directory
 import           System.Environment
-
-
+import           System.FilePath.Lens
 import           System.IO
 -------------------------------------------------------------------------------
 import           Hadron.Basic                 hiding (mapReduce)
@@ -315,7 +314,8 @@ taps fp p = Tap fp p
 readTap :: RunContext -> Tap a -> ResourceT IO [a]
 readTap rc t = do
     fs <- liftIO $ concat <$> forM (location t) (hdfsLs rc)
-    inp fs =$= (protoDec . proto) t $$ C.consume
+    let fs' = filter (\ fp -> not  $ elem (fp ^. filename) [".", ".."]) fs
+    inp fs' =$= (protoDec . proto) t $$ C.consume
     where
       inp fs = forM_ fs (hdfsCat rc)
 
@@ -348,18 +348,22 @@ fileListTap settings loc = tap loc (Protocol enc dec)
 
 
 data ContState = ContState {
-      _csMRCount :: ! Int
+      _csMRCount      :: ! Int
     -- ^ MR run count; one for each 'connect'.
-    , _csMRVars  :: ! (M.Map String B.ByteString)
+    , _csMRVars       :: ! (M.Map String B.ByteString)
     -- ^ Arbitrary key-val store that's communicated to nodes.
-    , _csDynId   :: ! Int
+    , _csDynId        :: ! Int
     -- ^ Keeps increasing count of dynamic taps in the order they are
     -- created in the Controller monad. Needed so we can communicate
     -- the tap locations to MR nodes.
+    , _csShortCircuit :: Bool
+    -- ^ Used by the remote nodes. When they hit their primary target
+    -- (the mapper, combiner or the reducer), they should stop
+    -- executing.
     }
 
 instance Default ContState where
-    def = ContState 0 M.empty 0
+    def = ContState 0 M.empty 0 False
 
 
 makeLenses ''ContState
@@ -614,8 +618,8 @@ orchestrate (Controller p) settings rr s = do
 
               st <- use csMRVars
 
-              withLocalFile settings local $ \ local ->
-                liftIO $ writeFile local (show st)
+              withLocalFile settings local $ \ lfp ->
+                liftIO $ writeFile lfp (show st)
 
               -- put settings file into a file named after the
               -- randomly generated token.
@@ -669,7 +673,7 @@ encodeKey = C.map (first toCompKey)
 -- mapper/reducer executable when called with right arguments, though
 -- you don't have to worry about that.
 hadoopMain
-    :: forall m a. (MonadThrow m, MonadMask m, MonadIO m)
+    :: forall m a. (MonadThrow m, MonadMask m, MonadIO m, Functor m)
     => Controller a
     -- ^ The Hadoop streaming application to run.
     -> RunContext
@@ -677,51 +681,67 @@ hadoopMain
     -> RerunStrategy
     -- ^ What to do if destination files already exist.
     -> m ()
-hadoopMain cont@(Controller p) settings rr = do
+hadoopMain cont settings rr = do
     args <- liftIO getArgs
     case args of
       [] -> do
         res <- orchestrate cont settings rr def
         liftIO $ either print (const $ putStrLn "Success.") res
-      [runToken, arg] -> do
-        _ <- evalStateT (loadState runToken >>
-                         interpretWithMonad (go runToken arg) p) def
-        return ()
+      [runToken, arg] -> void $ workNode settings cont runToken arg
       _ -> error "Usage: No arguments for job control or a phase name."
-    where
-
-      mkArgs mrKey = [ (Map, "mapper_" ++ mrKey)
-                     , (Reduce, "reducer_" ++ mrKey)
-                     , (Combine, "combiner_" ++ mrKey) ]
 
 
-      -- load controller varibles back up
-      loadState runToken = do
-          fn <- hdfsTempFilePath settings runToken
-          tmp <- liftIO $ hdfsGet settings fn
-          st <- liftIO $ withLocalFile settings tmp $ \ local -> do
-            !st <- readFile local <&> read
-            -- removeFile local
-            return st
-          csMRVars %= M.union st
 
 
-      go :: String -> String -> ConI b -> StateT ContState m b
+-------------------------------------------------------------------------------
+mkArgs mrKey = [ (Map, "mapper_" ++ mrKey)
+               , (Reduce, "reducer_" ++ mrKey)
+               , (Combine, "combiner_" ++ mrKey) ]
 
-      go _ _ (ConIO f) = liftIO f
 
-      go _ _ (OrchIO _) = return ()
+-------------------------------------------------------------------------------
+-- | load controller varibles back up
+loadState settings runToken = do
+    fn <- hdfsTempFilePath settings runToken
+    tmp <- liftIO $ hdfsGet settings fn
+    st <- liftIO $ withLocalFile settings tmp $ \ local -> do
+      !st <- readFile local <&> read
+      -- removeFile local
+      return st
+    csMRVars %= M.union st
 
-      go _ _ (NodeIO f) = liftIO f
 
-      go _ _ (MakeTap proto) = do
+-------------------------------------------------------------------------------
+-- | Interpret the Controller in the context of a Hadoop worker node.
+-- In this mode, the objective is to find the mapper, combiner or the
+-- reducer that we are supposed to be executing as.
+workNode
+    :: forall m a. (MonadIO m, MonadThrow m, MonadMask m)
+    => RunContext
+    -> Controller a
+    -> String
+    -> String
+    -> m a
+workNode settings (Controller p) runToken arg = flip evalStateT def $ do
+    loadState settings runToken
+    interpretWithMonad go p
+  where
+      go :: ConI b -> StateT ContState m b
+
+      go (ConIO f) = liftIO f
+
+      go (OrchIO _) = return ()
+
+      go (NodeIO f) = liftIO f
+
+      go (MakeTap proto) = do
           curId <- pickId
           dynLoc <- use $ tapLens curId
           case dynLoc of
             Nothing -> error $ "Dynamic location can't be determined for MakTap at index " <> show curId
             Just loc' -> return $ Tap ([B.unpack loc']) proto
 
-      go _ _ (BinaryDirTap loc _) = do
+      go (BinaryDirTap loc _) = do
 
           -- remember location of the file from the original loc
           -- string
@@ -734,21 +754,21 @@ hadoopMain cont@(Controller p) settings rr = do
 
       -- setting in map-reduce phase is a no-op... There's nobody to
       -- communicate it to.
-      go _ _ (SetVal _ _) = return ()
-      go _ _ (GetVal k) = use (csMRVars . at k)
+      go (SetVal _ _) = return ()
+      go (GetVal k) = use (csMRVars . at k)
 
-      go _ arg (Connect (MapReduce mro mrInPrism mp comb rd) inp outp _) = do
+      go (Connect (MapReduce mro mrInPrism mp comb rd) inp outp _) = do
           mrKey <- newMRKey
 
           let dec = protoDec . proto $ head inp
               enc = protoEnc  $ proto outp
 
-          let mp' = (mapperWith mrInPrism $
+              mp' = (mapperWith mrInPrism $
                      dec =$=
                      mp =$=
                      encodeKey)
 
-          let red = do
+              red = do
                   let conv (k,v) = do
                           !k' <- fromCompKey k
                           return (k', v)
@@ -756,36 +776,40 @@ hadoopMain cont@(Controller p) settings rr = do
                   liftIO $ (reducerMain mro mrInPrism rd')
 
 
-          let comb' = case comb of
+              comb' = case comb of
                   Nothing -> error "Unexpected: No combiner supplied."
                   Just c -> do
                       let c' = decodeKey =$= c =$= encodeKey
                       liftIO $ combiner mro mrInPrism c'
 
 
+              -- error message maker for caught exceptions
+              mkErr :: Maybe FilePath -> String -> SomeException -> b
+              mkErr file stage e = error $
+                "Exception raised during " <> stage <>
+                " in MR Job #" <> show mrKey <>
+                maybe "" (" while processing file " <>) file <>
+                ": " <> show e
+
+
           case find ((== arg) . snd) $ mkArgs mrKey of
 
-            Just (Map, _) -> liftIO $ do
-              curFile <- getFileName
-              catching exception mp'
-                (\ (e :: SomeException) ->
-                     error $ "Exception raised during Map in stage " <>
-                             show mrKey <>
-                             " while processing file " <> curFile <>
-                             ": " <> show e)
+            Just (Map, _) -> do
+              liftIO $ do
+                curFile <- getFileName
+                catching exception mp' (mkErr (Just curFile) "mapper")
 
-            Just (Reduce, _) -> liftIO $ do
-              catching exception red
-                (\ (e :: SomeException) ->
-                     error $ "Exception raised during Reduce in stage " <>
-                             show mrKey <> ": " <> show e)
+              csShortCircuit .= True
 
 
-            Just (Combine, _) -> liftIO $ do
-              catching exception comb'
-                (\ (e :: SomeException) ->
-                     error $ "Exception raised during Combine in stage " <>
-                             show mrKey <> ": " <> show e)
+            Just (Reduce, _) -> do
+              liftIO $ catching exception red (mkErr Nothing "reducer")
+              csShortCircuit .= True
+
+
+            Just (Combine, _) -> do
+              liftIO $ catching exception comb' (mkErr Nothing "combiner")
+              csShortCircuit .= True
 
             Nothing -> return ()
 
