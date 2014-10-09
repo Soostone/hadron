@@ -843,7 +843,7 @@ workNode settings (Controller p) runToken arg = do
       go (SetVal _ _) = return ()
       go (GetVal k) = use (csMRVars . at k)
 
-      go (Connect (MapReduce mro mrInPrism mp comb rd) inp outp _) = do
+      go (Connect (MapReduce mro mrInPrism mp comb rd) inp outp nm) = do
           mrKey <- newMRKey
 
           let dec = protoDec . proto $ head inp
@@ -873,7 +873,8 @@ workNode settings (Controller p) runToken arg = do
               mkErr :: Maybe FilePath -> String -> SomeException -> b
               mkErr file stage e = error $
                 "Exception raised during " <> stage <>
-                " in MR Job #" <> show mrKey <>
+                " in MR Job #" <> mrKey <>
+                maybe "" (\nm' -> " (" <> nm' <> ") ") nm <>
                 maybe "" (" while processing file " <>) file <>
                 ": " <> show e
 

@@ -113,9 +113,11 @@ localMapReduce ls mrKey token H.HadoopRunOpts{..} = do
 
     let infiles = intercalate " " $ concat expandedInput
 
-        command = "cat " <> infiles <> " | " <>
-          exPath <> " " <> token <> " " <> "mapper_" <> mrKey <> " | " <>
-          "sort -t$'\t' -k1" <> " | " <>
+        pipe = " | "
+
+        command = "cat " <> infiles <> pipe <>
+          exPath <> " " <> token <> " " <> "mapper_" <> mrKey <> pipe <>
+          ("sort -t$'\t' -k" <> show (H.numSegs mrsPart)) <> pipe <>
           exPath <> " " <> token <> " " <> "reducer_" <> mrKey <>
           " > " <> outFile
 
