@@ -119,7 +119,7 @@ data Comparator
     = RegularComp
     -- ^ Regular sorting
     | NumericComp Int Int Bool
-    -- ^ Numeric sorting spoanning fields i to j, True=reversed
+    -- ^ Numeric sorting spanning fields i to j, True=reversed
 
 instance Default Comparator where def = RegularComp
 

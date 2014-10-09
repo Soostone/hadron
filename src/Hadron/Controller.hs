@@ -206,10 +206,10 @@ instance MRKey T.Text where
     numKeys _ = 1
 
 instance Serialize a => MRKey (WrapSerialize a) where
-    toCompKey = toCompKey . encode . _getSerialized
+    toCompKey = toCompKey . (^. re pSerialize) . _getSerialized
     keyParser = do
-        a <- decode <$> keyParser
-        either fail (return . WS) a
+        a <- (^? pSerialize) <$> keyParser
+        maybe (fail "Can't decode WrapSerialize") (return . WS) a
     numKeys _ = 1
 
 utcFormat :: String

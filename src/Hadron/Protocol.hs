@@ -9,6 +9,7 @@ module Hadron.Protocol
     , prismToProtocol
 
     , base64SerProtocol
+    , base64SafeCopyProtocol
     , idProtocol
     , linesProtocol
     , gzipProtocol
@@ -17,6 +18,7 @@ module Hadron.Protocol
 
     -- * Serialization Prisms
     , pSerialize
+    , pSafeCopy
     , pShow
 
     -- * Serialization Utils
@@ -38,6 +40,7 @@ module Hadron.Protocol
 import           Blaze.ByteString.Builder
 import           Control.Applicative
 import           Control.Category
+import           Control.Error
 import           Control.Lens
 import           Control.Monad
 import           Control.Monad.Catch
@@ -52,9 +55,10 @@ import qualified Data.Conduit.List                as C
 import           Data.Conduit.Zlib                (gzip, ungzip)
 import           Data.CSV.Conduit
 import           Data.Monoid
+import qualified Data.SafeCopy                    as SC
 import qualified Data.Serialize                   as Ser
 import           Prelude                          hiding (id, (.))
-import           Safe
+
 -------------------------------------------------------------------------------
 import           Hadron.Types
 -------------------------------------------------------------------------------
@@ -124,6 +128,13 @@ base64SerProtocol = prismToProtocol pSerialize
 
 
 -------------------------------------------------------------------------------
+-- | Channel the 'Serialize' instance through 'Base64' encoding to
+-- make it newline-safe, then turn into newline-separated stream.
+base64SafeCopyProtocol :: SC.SafeCopy a => Protocol' a
+base64SafeCopyProtocol = prismToProtocol pSafeCopy
+
+
+-------------------------------------------------------------------------------
 -- | Encode and decode a gzip stream
 gzipProtocol :: Protocol B.ByteString B.ByteString
 gzipProtocol = Protocol gzip ungzip
@@ -175,6 +186,13 @@ deserialize = Ser.decode <=< Base64.decode
 -- Just byteStr
 pSerialize :: Ser.Serialize a => Prism' B.ByteString a
 pSerialize = prism serialize (\x -> either (const $ Left x) Right $ deserialize x)
+
+
+-------------------------------------------------------------------------------
+pSafeCopy :: SC.SafeCopy a => Prism' B.ByteString a
+pSafeCopy = prism'
+  (Base64.encode . Ser.runPut . SC.safePut)
+  (hush . (Ser.runGet SC.safeGet <=< Base64.decode))
 
 
 -- | Serialize with the Show/Read instances
