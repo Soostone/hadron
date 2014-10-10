@@ -44,6 +44,7 @@ module Hadron.Controller
     , nodeIO
     , setVal
     , getVal
+    , runOnce
 
     , MapReduce (..)
     , mrOptions
@@ -315,7 +316,7 @@ instance (MRKey a, MRKey b, MRKey c, MRKey d) => MRKey (a,b,c,d) where
 
 
 -------------------------------------------------------------------------------
--- | Dome something with the m-r input before starting the map stage.
+-- | Do something with the m-r input before starting the map stage.
 (<.<) :: Conduit c (ResourceT IO) a -> MapReduce a b -> MapReduce c b
 f <.< (MapReduce o p m c r) = MapReduce o p (f =$= m) c r
 
@@ -418,6 +419,9 @@ data ContState = ContState {
     -- ^ Keeps increasing count of dynamic taps in the order they are
     -- created in the Controller monad. Needed so we can communicate
     -- the tap locations to MR nodes.
+    , _csRunOnceId    :: ! Int
+    -- ^ Increasing count of run-once cache items so we can
+    -- communicate to remote nodes.
     , _csShortCircuit :: Bool
     -- ^ Used by the remote nodes. When they hit their primary target
     -- (the mapper, combiner or the reducer), they should stop
@@ -425,7 +429,7 @@ data ContState = ContState {
     }
 
 instance Default ContState where
-    def = ContState 0 M.empty 0 False
+    def = ContState 0 M.empty 0 0 False
 
 
 makeLenses ''ContState
@@ -455,6 +459,10 @@ data ConI a where
     SetVal :: String -> B.ByteString -> ConI ()
 
     GetVal :: String -> ConI (Maybe B.ByteString)
+
+    RunOnce :: Serialize a => IO a -> ConI a
+    -- ^ Only run on orchestrator, then make available to all the
+    -- nodes via HDFS.
 
 
 -- | All MapReduce steps are integrated in the 'Controller' monad.
@@ -537,6 +545,12 @@ orchIO :: IO a -> Controller ()
 orchIO = Controller . singleton . OrchIO
 
 
+-- | Perform an IO action to obtain value, then cache it on HDFS and
+-- magically make it available to nodes during their runtime.
+runOnce :: Serialize a => IO a -> Controller a
+runOnce = Controller . singleton . RunOnce
+
+
 -------------------------------------------------------------------------------
 -- | Perform an IO operation only on the worker nodes.
 nodeIO :: IO a -> Controller a
@@ -568,19 +582,27 @@ setupBinaryDir settings loc chk = do
     return (localFile, hdfsFile)
 
 
-tapLens
-    :: (Functor f, Show a)
-    => a
-    -> (Maybe B.ByteString -> f (Maybe B.ByteString))
-    -> ContState
-    -> f ContState
+tapLens :: Int -> Lens' ContState (Maybe B.ByteString)
 tapLens curId = csMRVars.at ("tap_" <> show curId)
 
+runCacheLens :: Int -> Lens' ContState (Maybe B.ByteString)
+runCacheLens curId = csMRVars.at ("runOnce_" <> show curId)
 
-pickId :: MonadState ContState m => m Int
-pickId = do
-    curId <- use csDynId
-    csDynId %= (+1)
+
+pickTapId :: MonadState ContState m => m Int
+pickTapId = pickIdWith csDynId
+
+
+pickRunCacheId :: MonadState ContState m => m Int
+pickRunCacheId = pickIdWith csRunOnceId
+
+
+-------------------------------------------------------------------------------
+-- | Monotinically increasing counter.
+pickIdWith :: MonadState ContState m => Lens' ContState Int -> m Int
+pickIdWith l = do
+    curId <- use l
+    l %= (+1)
     return curId
 
 
@@ -617,10 +639,30 @@ orchestrate (Controller p) settings rr s = do
 
       eval' (NodeIO _) = return (error "NodeIO can't be used in the orchestrator decision path")
 
+      -- evaluate the function, write its result into HDFS for later retrieval
+      eval' (RunOnce f) = do
+          a <- liftIO f
+
+          curId <- pickRunCacheId
+
+          runCacheLens curId .= Just (encode a)
+
+          -- loc <- liftIO $ randomRemoteFile settings
+          -- curId <- pickRunCacheId
+          -- runCacheLens curId .= Just (B.pack loc)
+
+          -- tmp <- randomFileName
+          -- liftIO $ withLocalFile settings tmp $ \ fn ->
+          --   B.writeFile fn (encode a)
+          -- liftIO $ hdfsPut settings tmp loc
+
+          return a
+
+
       eval' (MakeTap proto) = do
           loc <- liftIO $ randomRemoteFile settings
 
-          curId <- pickId
+          curId <- pickTapId
           tapLens curId .= Just (B.pack loc)
 
           return $ Tap [loc] proto
@@ -630,7 +672,7 @@ orchestrate (Controller p) settings rr s = do
 
           -- remember location of the file from the original loc
           -- string
-          curId <- pickId
+          curId <- pickTapId
           tapLens curId .= Just (B.pack hdfsFile)
 
           return $ fileListTap settings hdfsFile
@@ -821,7 +863,7 @@ workNode settings (Controller p) runToken arg = do
       go (NodeIO f) = liftIO f
 
       go (MakeTap proto) = do
-          curId <- pickId
+          curId <- pickTapId
           dynLoc <- use $ tapLens curId
           case dynLoc of
             Nothing -> error $ "Dynamic location can't be determined for MakTap at index " <> show curId
@@ -831,7 +873,7 @@ workNode settings (Controller p) runToken arg = do
 
           -- remember location of the file from the original loc
           -- string
-          curId <- pickId
+          curId <- pickTapId
           dynLoc <- use $ tapLens curId
           case dynLoc of
             Nothing -> error $
@@ -842,6 +884,13 @@ workNode settings (Controller p) runToken arg = do
       -- communicate it to.
       go (SetVal _ _) = return ()
       go (GetVal k) = use (csMRVars . at k)
+
+      go (RunOnce _) = do
+          curId <- pickRunCacheId
+          bs <- use (runCacheLens curId)
+
+          either error return $
+            note "RunOnce cache missing on remote node" bs >>= decode
 
       go (Connect (MapReduce mro mrInPrism mp comb rd) inp outp nm) = do
           mrKey <- newMRKey
