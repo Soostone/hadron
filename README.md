@@ -109,3 +109,22 @@ Defines data encode/decode strategies via the Protocol type.
     a config file
     
 
+
+## Release Notes
+
+
+## Version 0.5
+
+- Hadoop operations are now put behind a Hadron.Run interface.
+
+- Hadron.Run.Local now implements a basic form of Hadoop mimickery,
+  allowing a wide variety of Controller-based MapReduce applications
+  to be run locally on the development machine.
+
+- Several interface improvements to working with local and HDFS based
+  files during a Controller app.
+
+- runOnce combinator allows running an "IO a" action in the central
+  node and having the same value appear on the remote (worker) nodes.
+
+
