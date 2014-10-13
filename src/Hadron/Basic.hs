@@ -49,7 +49,6 @@ module Hadron.Basic
     , mapperWith
     , combiner
     , reducer
-    , reducerMain
 
     -- * Data Serialization Utilities
     , module Hadron.Protocol
@@ -63,25 +62,22 @@ import           Control.Applicative
 import           Control.Category
 import           Control.Lens
 import           Control.Monad
-import           Control.Monad.Base
-import           Control.Monad.Primitive
 import           Control.Monad.Trans
-import           Control.Monad.Trans.Resource
-import qualified Data.ByteString.Char8        as B
-import qualified Data.ByteString.Lazy.Char8   as LB
-import           Data.Conduit
-import           Data.Conduit.Binary          (sinkHandle, sourceHandle)
-import           Data.Conduit.Blaze
-import qualified Data.Conduit.List            as C
+import qualified Data.ByteString.Char8      as B
+import qualified Data.ByteString.Lazy.Char8 as LB
+import           Data.IORef
 import           Data.List
 import           Data.Monoid
 import           Options.Applicative
-import           Prelude                      hiding (id, (.))
+import           Prelude                    hiding (id, (.))
 import           System.Environment
 import           System.IO
+import           System.IO.Streams          (InputStream, OutputStream)
+import qualified System.IO.Streams          as S
 -------------------------------------------------------------------------------
 import           Hadron.Protocol
 import           Hadron.Run.Hadoop
+import           Hadron.Streams
 import           Hadron.Types
 -------------------------------------------------------------------------------
 
@@ -135,9 +131,9 @@ getFileName = liftIO $ getEnv "map_input_file"
 
 
 
--- | Construct a mapper program using a given low-level conduit.
+-------------------------------------------------------------------------------
 mapper
-    :: Conduit B.ByteString (ResourceT IO) (CompositeKey, B.ByteString)
+    :: Mapper B.ByteString CompositeKey B.ByteString
     -- ^ A key/value producer - don't worry about putting any newline
     -- endings yourself, we do that for you.
     -> IO ()
@@ -147,45 +143,28 @@ mapper f = mapperWith id f
 -- | Construct a mapper program using given serialization Prism.
 mapperWith
     :: Prism' B.ByteString t
-    -> Conduit B.ByteString (ResourceT IO) (CompositeKey, t)
+    -> Mapper B.ByteString CompositeKey t
     -> IO ()
-mapperWith p f = runResourceT $ do
+mapperWith p f = do
     setLineBuffering
-    sourceHandle stdin $=
-      f $=
-      encodeMapOutput p $$
-      sinkHandle stdout
-
-
-combiner
-    :: MROptions
-    -> Prism' B.ByteString b
-    -> Conduit (CompositeKey, b) (ResourceT IO) (CompositeKey, b)
-    -> IO ()
-combiner mro mrInPrism f  = runResourceT $ do
-    setLineBuffering
-    sourceHandle stdin =$=
-      decodeReducerInput mro mrInPrism =$=
-      f =$=
-      encodeMapOutput mrInPrism $$
-      sinkHandle stdout
+    i <- S.map (encodeMapOutput p) =<< f S.stdin
+    S.connect i S.stdout
 
 
 -------------------------------------------------------------------------------
--- | Build a main function entry point for a reducer. The buck stops
--- here and we tag each bytestring line with a newline.
-reducerMain
+combiner
     :: MROptions
-    -> Prism' B.ByteString a
-    -> Reducer CompositeKey a B.ByteString
-    -- ^ Important: It is assumed that each 'ByteString' here will end
-    -- (your responsibility) with a newline, therefore constituting a
-    -- line for the Hadoop ecosystem.
+    -> Prism' B.ByteString b
+    -> Reducer CompositeKey b (CompositeKey, b)
     -> IO ()
-reducerMain mro@MROptions{..} mrInPrism g = runResourceT $
-    reducer mro mrInPrism g $=
-    C.mapM_ emitOutput $$
-    C.sinkNull
+combiner mro mrInPrism f  = do
+    setLineBuffering
+
+    i <- decodeReducerInput mro mrInPrism
+      >>= f
+      >>= S.map (encodeMapOutput mrInPrism)
+
+    S.connect i S.stdout
 
 
 
@@ -200,13 +179,13 @@ setLineBuffering = do
 -- | Appropriately produce lines of mapper output in a way compliant
 -- with Hadoop and 'decodeReducerInput'.
 encodeMapOutput
-    :: (PrimMonad base, MonadBase base m)
-    => Prism' B.ByteString b
-    -> Conduit (CompositeKey, b) m B.ByteString
-encodeMapOutput mrInPrism = C.map conv $= builderToByteString
+    :: Prism' B.ByteString b
+    -> (CompositeKey, b)
+    -> B.ByteString
+encodeMapOutput mrInPrism (k, v) = toByteString conv
     where
 
-      conv (k,v) = mconcat
+      conv = mconcat
         [ mconcat (intersperse tab (map fromByteString k))
         , tab
         , fromByteString (review mrInPrism v)
@@ -217,14 +196,13 @@ encodeMapOutput mrInPrism = C.map conv $= builderToByteString
 
 
 decodeReducerInput
-    :: (MonadIO m, MonadThrow m)
-    => MROptions
+    :: MROptions
     -> Prism' B.ByteString b
-    -> ConduitM a (CompositeKey, b) m ()
+    -> IO (InputStream (CompositeKey, b))
 decodeReducerInput mro mrInPrism =
-    sourceHandle stdin =$=
-    lineC (numSegs (_mroPart mro)) =$=
-    C.mapMaybe (_2 (firstOf mrInPrism))
+    lineC (numSegs (_mroPart mro)) S.stdin >>=
+    mapMaybeS (_2 (firstOf mrInPrism))
+
 
 
 -- | An easy way to construct a reducer pogram. Just supply the
@@ -235,38 +213,44 @@ reducer
     -- ^ Input conversion function
     -> Reducer CompositeKey a B.ByteString
     -- ^ A step function for the given key.
-    -> Source (ResourceT IO) B.ByteString
+    -> IO ()
 reducer mro@MROptions{..} mrInPrism f = do
     setLineBuffering
-    sourceHandle stdin =$=
-      decodeReducerInput mro mrInPrism =$=
-      go2
-    where
-      go2 = do
-        next <- await
+
+    decodeReducerInput mro mrInPrism
+      >>= go2
+
+  where
+
+    go2 i = do
+        next <- S.peek i
         case next of
           Nothing -> return ()
-          Just x -> do
-            leftover x
-            block
-            go2
+          Just _ -> do
+           is <- f =<< isolateSameKey i
+           S.supply is S.stdout
+           go2 i
 
-      block = sameKey Nothing =$= f
+    isolateSameKey i = do
+        ref <- newIORef Nothing
+        S.makeInputStream (block ref i)
 
-      sameKey cur = do
-          next <- await
-          case next of
-            Nothing -> return ()
-            Just x@(k,_) ->
-              case cur of
-                Just curKey -> do
-                  let n = eqSegs _mroPart
-                  case take n curKey == take n k of
-                    True -> yield x >> sameKey cur
-                    False -> leftover x
-                Nothing -> do
-                  yield x
-                  sameKey (Just k)
+
+    block ref i = do
+        cur <- readIORef ref
+        next <- S.read i
+        case next of
+          Nothing -> return Nothing
+          Just x@(k,_) ->
+            case cur of
+              Just curKey -> do
+                let n = eqSegs _mroPart
+                case take n curKey == take n k of
+                  True -> return $ Just x
+                  False -> S.unRead x i >> return Nothing
+              Nothing -> do
+                writeIORef ref (Just k)
+                return $ Just x
 
 
 
@@ -287,7 +271,7 @@ mapReduce
 mapReduce mro mrInPrism f g = (mp, rd)
     where
       mp = mapperWith mrInPrism f
-      rd = reducerMain mro mrInPrism g
+      rd = reducer mro mrInPrism g
 
 
 

@@ -123,9 +123,6 @@ import           Control.Monad.State
 import           Control.Monad.Trans.Resource
 import qualified Data.ByteString.Char8        as B
 import           Data.ByteString.Search       as B
-import           Data.Conduit                 as C
-import qualified Data.Conduit.List            as C
-import           Data.Conduit.Zlib
 import           Data.Default
 import           Data.List
 import qualified Data.Map.Strict              as M
@@ -140,6 +137,7 @@ import           System.Directory
 import           System.Environment
 import           System.FilePath.Lens
 import           System.IO
+import qualified System.IO.Streams            as S
 import           System.Locale
 import           Text.Parsec
 -------------------------------------------------------------------------------
@@ -331,7 +329,7 @@ data MapReduce a b = forall k v. MRKey k => MapReduce {
     -- ^ A serialization scheme for values between the map-reduce
     -- steps.
     , _mrMapper   :: Mapper a k v
-    , _mrCombiner :: Maybe (Conduit (k,v) (ResourceT IO) (k, v))
+    , _mrCombiner :: Maybe (Reducer k v (k,v))
     , _mrReducer  :: Reducer k v b
     }
 

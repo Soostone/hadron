@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns               #-}
 {-# LANGUAGE DeriveGeneric              #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedStrings          #-}
@@ -25,22 +26,23 @@ module Hadron.Join
 
 -------------------------------------------------------------------------------
 import           Control.Lens
-import           Control.Monad.Trans.Resource
-import qualified Data.ByteString.Char8        as B
-import           Data.Conduit
-import qualified Data.Conduit.List            as C
+
+import qualified Data.ByteString.Char8 as B
 import           Data.Default
 import           Data.Hashable
-import qualified Data.HashMap.Strict          as HM
+import qualified Data.HashMap.Strict   as HM
+import           Data.IORef
 import           Data.List
 import           Data.Monoid
 import           Data.Ord
 import           Data.Serialize
 import           Data.String
-import qualified Data.Vector                  as V
+import qualified Data.Vector           as V
 import           GHC.Generics
+import qualified System.IO.Streams     as S
 -------------------------------------------------------------------------------
 import           Hadron.Basic
+import           Hadron.Streams
 -------------------------------------------------------------------------------
 
 
@@ -107,8 +109,8 @@ bufToStr _ _ = error "bufToStr can only convert a Buffering to a Streaming"
 
 -- | Given a new row in the final dataset of the joinset, emit all the
 -- joined rows immediately.
-emitStream :: (Monad m, Monoid b) => JoinAcc b -> b -> ConduitM i b m ()
-emitStream Streaming{..} a = V.mapM_ (yield . mappend a) strStems
+emitStream :: Monoid b => JoinAcc b -> b -> [b]
+emitStream Streaming{..} a = V.toList $ V.map (mappend a) strStems
 emitStream _ _ = error "emitStream can't be called unless it's in Streaming mode."
 
 -------------------------------------------------------------------------------
@@ -123,24 +125,32 @@ joinReducer
     => [(DataSet, JoinType)]
     -- ^ Table definitions
     -> Reducer CompositeKey r r
-joinReducer fs = red def
-    where
-      red ja = do
-          next <- await
-          case next of
-            Nothing -> joinFinalize fs ja
-            Just x -> do
-              ja' <- joinReduceStep fs ja x
-              red $! ja'
+joinReducer fs is = do
+    ref <- newIORef (def, [])
+    S.makeInputStream $ go ref
+  where
+    go ref = do
+        (ja, buf) <- readIORef ref
+        case buf of
+          (x:rest) -> writeIORef ref (ja, rest) >> return (Just x)
+          [] -> do
+
+            next <- S.read is
+            case next of
+              Nothing -> writeIORef ref (ja, joinFinalize fs ja)
+              Just x -> do
+                let (ja', xs) = joinReduceStep fs ja x
+                writeIORef ref (ja', xs)
+
+            go ref
 
 
 -------------------------------------------------------------------------------
 joinFinalize
-    :: (Monad m, Monoid b)
+    :: (Monoid b)
     => [(DataSet, JoinType)]
     -> JoinAcc b
-    -> ConduitM i b m ()
-
+    -> [b]
 
 -- we're still in buffering, so nothing has been emitted yet. one of
 -- the tables (and definitely the last table) did not have any input
@@ -156,24 +166,24 @@ joinFinalize fs buf@Buffering{} =
 
 -- we're already in streaming, so we've been emitting output in
 -- real-time. nothing left to do at this point.
-joinFinalize _ Streaming{} = return ()
+joinFinalize _ Streaming{} = []
 
 
 -------------------------------------------------------------------------------
 -- | Make a step function for a join operation
 joinReduceStep
-    :: (Monad m, Monoid b)
+    :: (Monoid b)
     => DataDefs
     -> JoinAcc b
     -> (CompositeKey, b)
-    -> ConduitM i b m (JoinAcc b)
+    -> (JoinAcc b, [b])
 joinReduceStep fs buf@Buffering{..} (k, x) =
 
     -- Accumulate until you start seeing the last table. We'll start
     -- emitting immediately after that.
     case ds' == lastDataSet of
       False -> -- traceShow accumulate $
-               return $! accumulate
+               (accumulate, [])
       True ->
         let xs = filter ((/= ds') . fst) fs
         in joinReduceStep fs (bufToStr xs buf) (k,x)
@@ -184,7 +194,7 @@ joinReduceStep fs buf@Buffering{..} (k, x) =
 
       lastDataSet = fst $ last fs'
 
-      accumulate =
+      !accumulate =
           Buffering { bufData = HM.insertWith add ds' [x] bufData
                     }
 
@@ -192,7 +202,7 @@ joinReduceStep fs buf@Buffering{..} (k, x) =
       ds = last k
       ds' = DataSet ds
 
-joinReduceStep _ str@Streaming{} (_,x) = emitStream str x >> return str
+joinReduceStep _ str@Streaming{} (_,x) = (str, emitStream str x)
 
 
 -- | Helper for easy construction of specialized join mapper.
@@ -203,13 +213,13 @@ joinReduceStep _ str@Streaming{} (_,x) = emitStream str x >> return str
 joinMapper
     :: (String -> DataSet)
     -- ^ Infer dataset from current filename
-    -> (DataSet -> Conduit a (ResourceT IO) (CompositeKey, r))
+    -> (DataSet -> Mapper a CompositeKey r)
     -- ^ Given a dataset, map it to a common data type
     -> Mapper a CompositeKey r
-joinMapper getDS mkMap = do
+joinMapper getDS mkMap is = do
     fi <- getFileName
     let ds = getDS fi
-    mkMap ds =$= C.map (go ds)
+    mkMap ds is >>= S.map (go ds)
   where
     go ds (jk, a) = (jk ++ [getDataSet ds], a)
 
@@ -231,7 +241,7 @@ joinMain
     -- ^ Define your tables
     -> (String -> DataSet)
     -- ^ Infer dataset from input filename
-    -> (DataSet -> Conduit B.ByteString (ResourceT IO) (CompositeKey, r))
+    -> (DataSet -> Mapper B.ByteString CompositeKey r)
     -- ^ Map input stream to a join key and the common-denominator
     -- uniform data type we know how to 'mconcat'.
     -> Prism' B.ByteString r
@@ -240,6 +250,6 @@ joinMain
 joinMain fs getDS mkMap out = mapReduceMain joinOpts pSerialize mp rd
     where
 
-      mp = joinMapper getDS mkMap
+      mp is = joinMapper getDS mkMap is
 
-      rd = joinReducer fs =$= C.mapMaybe (firstOf (re out))
+      rd is = joinReducer fs is >>= mapMaybeS (firstOf (re out))

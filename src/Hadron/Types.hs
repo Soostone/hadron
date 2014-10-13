@@ -7,10 +7,9 @@ module Hadron.Types where
 
 -------------------------------------------------------------------------------
 import           Control.Lens
-import           Control.Monad.Trans.Resource
-import qualified Data.ByteString.Char8        as B
-import           Data.Conduit
+import qualified Data.ByteString.Char8 as B
 import           Data.Default
+import           System.IO.Streams
 -------------------------------------------------------------------------------
 import           Hadron.Run.Hadoop
 -------------------------------------------------------------------------------
@@ -28,8 +27,8 @@ mkKey = B.intercalate "|"
 
 -------------------------------------------------------------------------------
 -- | A 'Mapper' parses and converts the unbounded incoming stream of
--- input into a stream of (key, value) pairs.
-type Mapper a k b     = Conduit a (ResourceT IO) (k, b)
+-- input data into a stream of (key, value) pairs.
+type Mapper a k b     = InputStream a -> IO (InputStream (k, b))
 
 
 -------------------------------------------------------------------------------
@@ -42,7 +41,7 @@ type Mapper a k b     = Conduit a (ResourceT IO) (k, b)
 -- will be given to individual and isolated invocations of your
 -- reducer function. This is pretty much the key abstraction provided
 -- by this framework.
-type Reducer k a r  = Conduit (k, a) (ResourceT IO) r
+type Reducer k a r  = InputStream (k, a) -> IO (InputStream r)
 
 
 -------------------------------------------------------------------------------
@@ -74,6 +73,7 @@ data MROptions = MROptions {
 
 
 makeLenses ''MROptions
+
 
 instance Default MROptions where
     def = MROptions NoPartition RegularComp Nothing Nothing Nothing Nothing
