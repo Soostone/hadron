@@ -17,6 +17,7 @@ import qualified Data.ByteString.Char8            as B
 import qualified Data.Conduit                     as C
 import qualified Data.Conduit.List                as C
 import           Data.IORef
+import           Data.Maybe
 import           System.IO.Streams                (InputStream, OutputStream)
 import qualified System.IO.Streams                as S
 import qualified System.IO.Streams.Attoparsec     as S
@@ -185,13 +186,12 @@ emitFoldM f a0 is = do
               True -> return Nothing
               False -> do
                 inc <- S.read is
-                case inc of
-                  Nothing -> do
-                    modifyIORef' ref $ _2 .~ True
-                    loop ref
-                  Just _  -> do
-                    (!acc', !xs) <- f acc inc
-                    modifyIORef' ref $ (_3 .~ acc') . (_1 .~ xs)
-                    loop ref
+                (!acc', !xs) <- f acc inc
+                modifyIORef' ref $
+                  (_3 .~ acc') . (_1 .~ xs) .
+                  if isNothing inc
+                    then _2 .~ True
+                    else id
+                loop ref
 
 
