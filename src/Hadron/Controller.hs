@@ -60,6 +60,7 @@ module Hadron.Controller
 
     -- * Data Sources
     , Tap (..)
+    , proto, location
     , tap
     , taps
     , mergeTaps
@@ -116,36 +117,39 @@ import           Control.Error
 import           Control.Exception.Lens
 import           Control.Lens
 import           Control.Monad.Catch
-import           Control.Monad.Morph
-import           Control.Monad.Operational    hiding (view)
-import qualified Control.Monad.Operational    as O
+
+import           Control.Monad.Operational hiding (view)
+import qualified Control.Monad.Operational as O
 import           Control.Monad.State
-import           Control.Monad.Trans.Resource
-import qualified Data.ByteString.Char8        as B
-import           Data.ByteString.Search       as B
+
+import qualified Data.ByteString.Char8     as B
+import           Data.ByteString.Search    as B
 import           Data.Default
+import           Data.IORef
 import           Data.List
-import qualified Data.Map.Strict              as M
+import qualified Data.Map.Strict           as M
 import           Data.Monoid
 import           Data.RNG
 import           Data.Serialize
-import qualified Data.Text                    as T
+import qualified Data.Text                 as T
 import           Data.Text.Encoding
 import           Data.Time
 import           Data.Typeable
-import           System.Directory
+
 import           System.Environment
 import           System.FilePath.Lens
 import           System.IO
-import qualified System.IO.Streams            as S
+import           System.IO.Streams         (InputStream, OutputStream)
+import qualified System.IO.Streams         as S
 import           System.Locale
 import           Text.Parsec
 -------------------------------------------------------------------------------
-import           Hadron.Basic                 hiding (mapReduce)
+import           Hadron.Basic              hiding (mapReduce)
 import           Hadron.Join
 import           Hadron.Logger
 import           Hadron.Protocol
 import           Hadron.Run
+import           Hadron.Streams
 import           Hadron.Types
 -------------------------------------------------------------------------------
 
@@ -308,15 +312,19 @@ instance (MRKey a, MRKey b, MRKey c, MRKey d) => MRKey (a,b,c,d) where
 
 
 -------------------------------------------------------------------------------
--- | Do something with m-r output before writing it to a tap.
-(>.>) :: MapReduce a b -> Conduit b (ResourceT IO) c -> MapReduce a c
-(MapReduce o p m c r) >.> f = MapReduce o p m c (r =$= f)
+-- | Map MR output.
+(>.>) :: MapReduce a b -> (InputStream b -> IO (InputStream c)) -> MapReduce a c
+(MapReduce o p m c r) >.> f = MapReduce o p m c r'
+    where
+      r' i = r i >>= f
 
 
 -------------------------------------------------------------------------------
--- | Do something with the m-r input before starting the map stage.
-(<.<) :: Conduit c (ResourceT IO) a -> MapReduce a b -> MapReduce c b
-f <.< (MapReduce o p m c r) = MapReduce o p (f =$= m) c r
+-- | Contramap MR input; i.e. do something before MR.
+(<.<) :: (InputStream a -> IO (InputStream b)) -> MapReduce b c -> MapReduce a c
+f <.< (MapReduce o p m c r) = MapReduce o p m' c r
+    where
+      m' i = f i >>= m
 
 -------------------------------------------------------------------------------
 -- | A packaged MapReduce step. Make one of these for each distinct
@@ -350,14 +358,15 @@ mrOptions f (MapReduce o p m c r) = (\ o' -> MapReduce o' p m c r) <$> f o
 --
 -- > customers = 'tap' "s3n://my-bucket/customers" (csvProtocol def)
 data Tap a = Tap
-    { location :: [FilePath]
-    , proto    :: Protocol' a
+    { _location :: [FilePath]
+    , _proto    :: Protocol' a
     }
+makeLenses ''Tap
 
 
 -- | If two 'location's are the same, we consider two Taps equal.
 instance Eq (Tap a) where
-    a == b = location a == location b
+    a == b = _location a == _location b
 
 
 -- | Construct a 'DataDef'
@@ -372,24 +381,29 @@ taps fp p = Tap fp p
 -- | Given a tap directory, enumerate and load all files inside.
 -- Caution: This is meant only as a way to load small files, or else
 -- you'll fill up your memory.
-readTap :: RunContext -> Tap a -> ResourceT IO [a]
+readTap :: RunContext -> Tap a -> IO [a]
 readTap rc t = do
-    fs <- liftIO $ concat <$> forM (location t) (hdfsLs rc)
+    fs <- liftIO $ concat <$> forM (_location t) (hdfsLs rc)
     let fs' = filter (\ fp -> not  $ elem (fp ^. filename) [".", ".."]) fs
-    inp fs' =$= (protoDec . proto) t $$ C.consume
+    S.toList =<< liftIO . (t ^. proto . protoDec) =<< inp fs'
     where
-      inp fs = forM_ fs (hdfsCat rc)
+      inp fs = forM fs (hdfsCat rc) >>= S.concatInputStreams
 
 
 ------------------------------------------------------------------------------
 -- | Conduit that takes in hdfs filenames and outputs the file contents.
-readHdfsFile :: RunContext -> Conduit B.ByteString (ResourceT IO) B.ByteString
-readHdfsFile settings = awaitForever $ \s3Uri -> do
-    let uriStr = B.unpack s3Uri
-        getFile = hdfsLocalStream settings uriStr
-    if isSuffixOf "gz" uriStr
-      then getFile =$= ungzip
-      else getFile
+readHdfsFile
+    :: RunContext
+    -> S.InputStream B.ByteString
+    -> IO (S.InputStream B.ByteString)
+readHdfsFile settings is = bindStream is go
+    where
+      go s3Uri = do
+        let uriStr = B.unpack s3Uri
+            getFile = hdfsLocalStream settings uriStr
+        if isSuffixOf "gz" uriStr
+          then getFile >>= S.gunzip
+          else getFile
 
 
 ------------------------------------------------------------------------------
@@ -405,7 +419,7 @@ fileListTap :: RunContext
 fileListTap settings loc = tap loc (Protocol enc dec)
   where
     enc = error "You should never use a fileListTap as output!"
-    dec = linesConduit =$= readHdfsFile settings
+    dec is = streamLines is >>= readHdfsFile settings
 
 
 data ContState = ContState {
@@ -687,7 +701,7 @@ orchestrate (Controller p) settings rr s = do
                 liftIO $ infoM "Hadron.Controller"
                   ("Launching MR job with key: " ++ show mrKey)
 
-                chk <- liftIO $ mapM (hdfsFileExists settings) (location outp)
+                chk <- liftIO $ mapM (hdfsFileExists settings) (_location outp)
                 case any id chk of
                   False -> do
                       liftIO $ infoM "Hadron.Controller"
@@ -696,14 +710,14 @@ orchestrate (Controller p) settings rr s = do
                   True ->
                     case rr of
                       RSFail -> liftIO $ errorM "Hadron.Controller" $
-                        "Destination exists: " <> head (location outp)
+                        "Destination exists: " <> head (_location outp)
                       RSSkip -> liftIO $ infoM "Hadron.Controller" $
-                        "Destination exists. Skipping " <> intercalate ", " (location outp)
+                        "Destination exists. Skipping " <> intercalate ", " (_location outp)
                       RSReRun -> do
                         liftIO $ infoM "Hadron.Controller" $
                           "Destination file exists, will delete and rerun: " <>
-                          head (location outp)
-                        _ <- liftIO $ mapM_ (hdfsDeletePath settings) (location outp)
+                          head (_location outp)
+                        _ <- liftIO $ mapM_ (hdfsDeletePath settings) (_location outp)
                         go'' mrKey
 
                         liftIO $ infoM "Hadron.Controller" ("MR job complete: " ++ show mrKey)
@@ -729,8 +743,8 @@ orchestrate (Controller p) settings rr s = do
 
               let mrs = mrOptsToRunOpts mro
               launchMapReduce settings mrKey runToken
-                mrs { mrsInput = concatMap location inp
-                    , mrsOutput = head (location outp)
+                mrs { mrsInput = concatMap _location inp
+                    , mrsOutput = head (_location outp)
                     , mrsJobName = nm
                     }
 
@@ -754,16 +768,14 @@ instance Default RerunStrategy where
     def = RSFail
 
 
-decodeKey :: (Monad m, MRKey k) => Conduit (CompositeKey, v) m (k, v)
-decodeKey = C.mapMaybe go
-    where
-      go (k,v) = do
-          !k' <- hush $ fromCompKey k
-          return (k', v)
+decodeKey :: MRKey k => (CompositeKey, v) -> Maybe (k, v)
+decodeKey (k,v) = do
+    !k' <- hush $ fromCompKey k
+    return (k', v)
 
 
-encodeKey :: (Monad m , MRKey k) => Conduit (k, v) m (CompositeKey, v)
-encodeKey = C.map (first toCompKey)
+encodeKey :: MRKey k => (k, v) -> (CompositeKey, v)
+encodeKey = first toCompKey
 
 
 
@@ -893,27 +905,16 @@ workNode settings (Controller p) runToken arg = do
       go (Connect (MapReduce mro mrInPrism mp comb rd) inp outp nm) = do
           mrKey <- newMRKey
 
-          let dec = protoDec . proto $ head inp
-              enc = protoEnc  $ proto outp
+          let dec = head inp ^. proto . protoDec
+              enc = outp ^. proto . to protoEncIS
 
-              mp' = (mapperWith mrInPrism $
-                     dec =$=
-                     mp =$=
-                     encodeKey)
-
-              red = do
-                  let conv (k,v) = do
-                          !k' <- hush $ fromCompKey k
-                          return (k', v)
-                      rd' = C.mapMaybe conv =$= rd =$= enc
-                  liftIO $ (reducerMain mro mrInPrism rd')
-
+              mp' = mapperWith mrInPrism $ dec >=> mp >=> S.map encodeKey
+              red = reducer mro mrInPrism $ mapMaybeS decodeKey >=> rd >=> enc
 
               comb' = case comb of
                   Nothing -> error "Unexpected: No combiner supplied."
-                  Just c -> do
-                      let c' = decodeKey =$= c =$= encodeKey
-                      liftIO $ combiner mro mrInPrism c'
+                  Just c -> combiner mro mrInPrism $
+                    mapMaybeS decodeKey >=> c >=> S.map encodeKey
 
 
               -- error message maker for caught exceptions
@@ -981,10 +982,10 @@ joinStep fs = MapReduce mro pSerialize mp Nothing rd
       mro = joinOpts { _mroPart = Partition (n+1) n }
 
       locations :: [FilePath]
-      locations = concatMap (location . view _1) fs
+      locations = concatMap (view (_1 . location)) fs
 
       taps' :: [Tap a]
-      taps' = concatMap ((\t -> replicate (length (location t)) t) . view _1) fs
+      taps' = concatMap ((\t -> replicate (length (_location t)) t) . view _1) fs
 
       locations' = map B.pack locations
 
@@ -999,7 +1000,7 @@ joinStep fs = MapReduce mro pSerialize mp Nothing rd
       tapIx = M.fromList $ zip (map snd dataSets) taps'
 
       getTapDS :: Tap a -> [DataSet]
-      getTapDS t = mapMaybe (flip M.lookup dsIx) (location t)
+      getTapDS t = mapMaybe (flip M.lookup dsIx) (_location t)
 
 
       fs' :: [(DataSet, JoinType)]
@@ -1015,10 +1016,10 @@ joinStep fs = MapReduce mro pSerialize mp Nothing rd
 
 
       -- | get the conduit for given dataset name
-      mkMap' ds = fromMaybe (error "Can't identify current tap in IX.") $ do
+      mkMap' ds is = fromMaybe (error "Can't identify current tap in IX.") $ do
                       t <- M.lookup ds tapIx
                       cond <- find ((== t) . view _1) fs
-                      return $ view _3 cond =$= C.map (over _1 toCompKey)
+                      return $ (view _3 cond) is >>= S.map (_1 %~ toCompKey)
 
       mp = joinMapper getDS mkMap'
 
@@ -1034,116 +1035,122 @@ joinStep fs = MapReduce mro pSerialize mp Nothing rd
 -- therefore fail to work properly on self joins where the same data
 -- location is used in both taps.
 mergeTaps :: Tap a -> Tap b -> Tap (Either a b)
-mergeTaps ta tb = Tap (location ta ++ location tb) newP
+mergeTaps ta tb = Tap (_location ta ++ _location tb) newP
     where
       newP = Protocol enc dec
 
-      dec = do
-          fn <- lift getFileName
-          if (any (flip isInfixOf fn) (map (takeWhile (/= '*')) $ location ta))
-            then (protoDec . proto) ta =$= C.map Left
-            else (protoDec . proto) tb =$= C.map Right
+      dec is = do
+          fn <- getFileName
+          if (any (flip isInfixOf fn) (map (takeWhile (/= '*')) $ _location ta))
+            then (ta ^. proto . protoDec) is >>= S.map Left
+            else (tb ^. proto . protoDec) is >>= S.map Right
 
-      enc =
-          awaitForever $ \ res ->
-              case res of
-                Left a -> yield a =$= (protoEnc . proto) ta
-                Right b -> yield b =$= (protoEnc . proto) tb
+      enc os = do
+          as <- (ta ^. (proto . protoEnc)) os
+          bs <- (tb ^. (proto . protoEnc)) os
 
-
-
-
-
--------------------------------------------------------------------------------
--- | A generic map-reduce function that should be good enough for most
--- cases.
-mapReduce
-    :: forall a k v b. (MRKey k, Serialize v)
-    => (a -> MaybeT IO [(k, v)])
-    -- ^ Common map key
-    -> (k -> b -> v -> IO b)
-    -- ^ Left fold in reduce stage
-    -> b
-    -- ^ A starting point for fold
-    -> MapReduce a (k,b)
-mapReduce mp rd a0 = MapReduce mro pSerialize m  Nothing r
-    where
-      n = numKeys (undefined :: k)
-      mro = def { _mroPart = Partition n n }
-
-      m :: Mapper a k v
-      m = awaitForever $ \ a -> runMaybeT $ hoist (lift . lift) (mp a) >>= lift . C.sourceList
-
-      r :: Reducer k v (k,b)
-      r = do
-          (k, b) <- C.foldM step (Nothing, a0)
-          case k of
-            Nothing -> return ()
-            Just k' -> yield (k', b)
+          S.makeOutputStream $ \ i ->
+            case i of
+              Nothing -> S.write Nothing os
+              Just (Left a) -> S.write (Just a) as
+              Just (Right a) -> S.write (Just a) bs
 
 
-      step (_, acc) (k, v) = do
-          !b <- liftIO $ rd k acc v
-          return (Just k, b)
+
+mapReduce = undefined
+-- -------------------------------------------------------------------------------
+-- -- | A generic map-reduce function that should be good enough for most
+-- -- cases.
+-- mapReduce
+--     :: forall a k v b. (MRKey k, Serialize v)
+--     => (a -> MaybeT IO [(k, v)])
+--     -- ^ Common map key
+--     -> (k -> b -> v -> IO b)
+--     -- ^ Left fold in reduce stage
+--     -> b
+--     -- ^ A starting point for fold
+--     -> MapReduce a (k,b)
+-- mapReduce mp rd a0 = MapReduce mro pSerialize m  Nothing r
+--     where
+--       n = numKeys (undefined :: k)
+--       mro = def { _mroPart = Partition n n }
+
+--       m :: Mapper a k v
+--       m = awaitForever $ \ a -> runMaybeT $ hoist (lift . lift) (mp a) >>= lift . C.sourceList
+
+--       r :: Reducer k v (k,b)
+--       r = do
+--           (k, b) <- C.foldM step (Nothing, a0)
+--           case k of
+--             Nothing -> return ()
+--             Just k' -> yield (k', b)
 
 
--------------------------------------------------------------------------------
--- | Deduplicate input objects that have the same key value; the first
--- object seen for each key will be kept.
-firstBy
-    :: forall a k. (Serialize a, MRKey k)
-    => (a -> MaybeT IO [k])
-    -- ^ Key making function
-    -> MapReduce a a
-firstBy f = mapReduce mp rd Nothing >.> (C.map snd =$= C.catMaybes)
-    where
-      mp :: a -> MaybeT IO [(k, a)]
-      mp a = do
-          k <- f a
-          return $ zip k (repeat a)
-
-      rd :: k -> Maybe a -> a -> IO (Maybe a)
-      rd _ Nothing a = return $! Just a
-      rd _ acc _ = return $! acc
+--       step (_, acc) (k, v) = do
+--           !b <- liftIO $ rd k acc v
+--           return (Just k, b)
 
 
--------------------------------------------------------------------------------
--- | A generic map-only MR step.
-mapMR :: (Serialize b) => (v -> IO [b]) -> MapReduce v b
-mapMR f = MapReduce def pSerialize mp Nothing rd
-    where
-      mp = do
-          rng <- liftIO mkRNG
-          awaitForever $ \ a -> do
-              t <- liftIO $ randomToken 2 rng
-              res <- liftIO $ f a
-              mapM_ (\x -> yield (t, x)) res
-      rd = C.map snd
+firstBy = undefined
+-- -------------------------------------------------------------------------------
+-- -- | Deduplicate input objects that have the same key value; the first
+-- -- object seen for each key will be kept.
+-- firstBy
+--     :: forall a k. (Serialize a, MRKey k)
+--     => (a -> MaybeT IO [k])
+--     -- ^ Key making function
+--     -> MapReduce a a
+-- firstBy f = mapReduce mp rd Nothing >.> (C.map snd =$= C.catMaybes)
+--     where
+--       mp :: a -> MaybeT IO [(k, a)]
+--       mp a = do
+--           k <- f a
+--           return $ zip k (repeat a)
+
+--       rd :: k -> Maybe a -> a -> IO (Maybe a)
+--       rd _ Nothing a = return $! Just a
+--       rd _ acc _ = return $! acc
 
 
--------------------------------------------------------------------------------
--- | Do somthing with only the first row we see, putting the result in
--- the given HDFS destination.
-oneSnap
-    :: RunContext
-    -> FilePath
-    -> (a -> B.ByteString)
-    -> Conduit a IO a
-oneSnap settings s3fp f = do
-    h <- await
-    case h of
-      Nothing -> return ()
-      Just h' -> do
-          liftIO $ putHeaders (f h')
-          yield h'
-          awaitForever yield
-  where
-    putHeaders x = do
-        tmp <- randomFileName
-        withLocalFile settings tmp $ \ fn -> B.writeFile fn x
-        chk <- hdfsFileExists settings s3fp
-        when (not chk) $ void $ hdfsPut settings tmp s3fp
-        withLocalFile settings tmp removeFile
+mapMR = undefined
+-- -------------------------------------------------------------------------------
+-- -- | A generic map-only MR step.
+-- mapMR :: (Serialize b) => (v -> IO [b]) -> MapReduce v b
+-- mapMR f = MapReduce def pSerialize mp Nothing rd
+--     where
+--       mp = do
+--           rng <- liftIO mkRNG
+--           awaitForever $ \ a -> do
+--               t <- liftIO $ randomToken 2 rng
+--               res <- liftIO $ f a
+--               mapM_ (\x -> yield (t, x)) res
+--       rd = C.map snd
+
+
+oneSnap = undefined
+-- -------------------------------------------------------------------------------
+-- -- | Do somthing with only the first row we see, putting the result in
+-- -- the given HDFS destination.
+-- oneSnap
+--     :: RunContext
+--     -> FilePath
+--     -> (a -> B.ByteString)
+--     -> Conduit a IO a
+-- oneSnap settings s3fp f = do
+--     h <- await
+--     case h of
+--       Nothing -> return ()
+--       Just h' -> do
+--           liftIO $ putHeaders (f h')
+--           yield h'
+--           awaitForever yield
+--   where
+--     putHeaders x = do
+--         tmp <- randomFileName
+--         withLocalFile settings tmp $ \ fn -> B.writeFile fn x
+--         chk <- hdfsFileExists settings s3fp
+--         when (not chk) $ void $ hdfsPut settings tmp s3fp
+--         withLocalFile settings tmp removeFile
 
 
 -------------------------------------------------------------------------------
@@ -1157,10 +1164,10 @@ oneSnap settings s3fp f = do
 -- to care.
 joinMR
     :: forall a b k v. (MRKey k, Monoid v, Serialize v)
-    => Conduit (Either a b) (ResourceT IO) (k, Either v v)
+    => Mapper (Either a b) k (Either v v)
     -- ^ Mapper for the input
     -> MapReduce (Either a b) v
-joinMR mp = MapReduce mro pSerialize mp' Nothing (go [])
+joinMR mp = MapReduce mro pSerialize mp' Nothing red
     where
       mro = def { _mroPart = Partition (n+1) n }
       n = numKeys (undefined :: k)
@@ -1168,19 +1175,31 @@ joinMR mp = MapReduce mro pSerialize mp' Nothing (go [])
       -- add to key so we know for sure all Lefts arrive before
       -- Rights.
 
-      mp' :: Conduit (Either a b) (ResourceT IO) (CompositeKey, Either v v)
-      mp' = mp =$= C.map modMap
+      mp' :: Mapper (Either a b) CompositeKey (Either v v)
+      mp' is = mp is >>= S.map modMap
 
       modMap (k, Left v) = (toCompKey k ++ ["1"], Left v)
       modMap (k, Right v) = (toCompKey k ++ ["2"], Right v)
 
       -- cache lefts, start emitting upon seeing the first right.
-      go ls = do
-          inc <- await
-          case inc of
-            Nothing -> return ()
-            Just (_, Left r) -> go $! (r:ls)
-            Just (_, Right b) -> do
-              mapM_ yield [mappend a b | a <- ls]
-              go ls
+      red is = do
+          ref <- newIORef ([], [])
+          S.makeInputStream (go is ref)
+
+      go is ref = do
+          (buffer, allLefts) <- readIORef ref
+          case buffer of
+            (x:rest) -> modifyIORef' ref (_1 .~ rest) >> return (Just x)
+            [] -> do
+              inc <- S.read is
+              case inc of
+                Nothing -> return Nothing
+                Just (_, Left r) -> do
+                  modifyIORef' ref (_2 %~ (r:))
+                  go is ref
+                Just (_, Right b) -> do
+                  let buffer' = [mappend a b | a <- allLefts]
+                  modifyIORef' ref (_1 .~ buffer')
+                  go is ref
+
 

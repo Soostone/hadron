@@ -225,7 +225,7 @@ reducer mro@MROptions{..} mrInPrism f = do
     go2 i = do
         next <- S.peek i
         case next of
-          Nothing -> return ()
+          Nothing -> S.write Nothing S.stdout
           Just _ -> do
            is <- f =<< isolateSameKey i
            S.supply is S.stdout

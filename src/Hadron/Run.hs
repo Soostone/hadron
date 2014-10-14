@@ -66,20 +66,19 @@ import           Control.Error
 import           Control.Exception.Lens
 import           Control.Lens
 import           Control.Monad
-import           Control.Monad.Morph
+
 import           Control.Monad.Trans
-import           Control.Monad.Trans.Resource
-import qualified Data.ByteString.Char8        as B
-import           Data.Conduit
-import           Data.Conduit.Binary
+
+import qualified Data.ByteString.Char8  as B
 import           Data.Monoid
 import           System.Directory
 import           System.FilePath.Posix
 import           System.IO
+import qualified System.IO.Streams      as S
 -------------------------------------------------------------------------------
-import qualified Hadron.Run.Hadoop            as H
-import           Hadron.Run.Local             (LocalFile (..))
-import qualified Hadron.Run.Local             as L
+import qualified Hadron.Run.Hadoop      as H
+import           Hadron.Run.Local       (LocalFile (..))
+import qualified Hadron.Run.Local       as L
 -------------------------------------------------------------------------------
 
 
@@ -152,9 +151,9 @@ hdfsMkdir env fp = case env of
 hdfsCat
     :: RunContext
     -> FilePath
-    -> Producer (ResourceT IO) B.ByteString
+    -> IO (S.InputStream B.ByteString)
 hdfsCat env fp = case env of
-    LocalRun env -> hoist (hoist (L.runLocal env)) (L.hdfsCat (LocalFile fp))
+    LocalRun env -> L.runLocal env (L.hdfsCat (LocalFile fp))
     HadoopRun{} -> hdfsLocalStream env fp
 
 
@@ -174,18 +173,17 @@ hdfsGet env fp = do
 hdfsLocalStream
     :: RunContext
     -> FilePath
-    -> ConduitM i B.ByteString (ResourceT IO) ()
+    -> IO (S.InputStream B.ByteString )
 hdfsLocalStream env fp = case env of
     LocalRun{} -> hdfsCat env fp
     HadoopRun e ls -> do
-      random <- liftIO $ hdfsGet env fp
+      random <- hdfsGet env fp
       withLocalFile env random $ \ local -> do
-        h <- liftIO $ catching _IOException
+        h <- catching _IOException
                (openFile local ReadMode)
                (\e ->  error $ "hdfsLocalStream failed with open file: " <> show e)
-        sourceHandle h
-        liftIO $ hClose h
-        liftIO $ removeFile local
+        let cleanup = hClose h >> removeFile local
+        S.handleToInputStream h >>= S.atEndOfInput cleanup
 
 
 

@@ -1,12 +1,14 @@
-{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE BangPatterns    #-}
+{-# LANGUAGE RankNTypes      #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 module Hadron.Streams where
-
 
 -------------------------------------------------------------------------------
 import           Control.Applicative
 import           Control.Concurrent.Async
 import           Control.Concurrent.BoundedChan
+import           Control.Lens
 import           Control.Monad
 import           Control.Monad.Trans
 import           Data.Attoparsec.ByteString.Char8 (Parser, endOfInput,
@@ -14,6 +16,7 @@ import           Data.Attoparsec.ByteString.Char8 (Parser, endOfInput,
 import qualified Data.ByteString.Char8            as B
 import qualified Data.Conduit                     as C
 import qualified Data.Conduit.List                as C
+import           Data.IORef
 import           System.IO.Streams                (InputStream, OutputStream)
 import qualified System.IO.Streams                as S
 import qualified System.IO.Streams.Attoparsec     as S
@@ -30,6 +33,34 @@ User can read from it.
 user. User can write to it.
 
 -}
+
+
+
+-------------------------------------------------------------------------------
+-- | Create a new stream for each item in the first stream and drain
+-- results into a single stream.
+bindStream :: InputStream a -> (a -> IO (InputStream b)) -> IO (InputStream b)
+bindStream i f = do
+    ref <- newIORef Nothing
+    S.makeInputStream (loop ref)
+  where
+    loop ref = do
+        !acc <- readIORef ref
+        case acc of
+          Just is -> do
+            n <- S.read is
+            case n of
+              Nothing -> writeIORef ref Nothing >> loop ref
+              Just _ -> return n
+          Nothing -> do
+            next <- S.read i
+            case next of
+              Nothing -> return Nothing
+              Just x -> do
+                !is <- f x
+                writeIORef ref (Just is)
+                loop ref
+
 
 
 -------------------------------------------------------------------------------
@@ -66,6 +97,7 @@ parseLine = (endOfInput >> pure Nothing) <|> (Just <$> (ln <* endOfLine))
 
 -- | Turn incoming stream into a stream of lines. This will
 -- automatically eat tab characters at the end of the line.
+streamLines :: InputStream B.ByteString -> IO (InputStream B.ByteString)
 streamLines = S.parserToInputStream parseLine
 
 
@@ -121,5 +153,45 @@ outputStreamToConsumer s = go
 
 
 
+-------------------------------------------------------------------------------
+-- | Fold while also possibly returning elements to emit each step.
+-- The IO action can be used at anytime to obtain the state of the
+-- accumulator.
+emitFoldM
+    :: (b -> Maybe i -> IO (b, [a]))
+    -> b
+    -> InputStream i
+    -> IO (InputStream a, IO b)
+emitFoldM f a0 is = do
+    ref <- newIORef ([], False, a0)
+    is' <- S.makeInputStream (loop ref)
+    return (is', liftM (view _3) (readIORef ref))
+
+  where
+
+    loop ref = do
+        (!buffer, !eof, !acc) <- readIORef ref
+
+        case buffer of
+
+          -- previous results in buffer; stream them out
+          (x:rest) -> do
+              modifyIORef' ref (_1 .~ rest)
+              return (Just x)
+
+          -- buffer empty; step the input stream
+          [] -> do
+            case eof of
+              True -> return Nothing
+              False -> do
+                inc <- S.read is
+                case inc of
+                  Nothing -> do
+                    modifyIORef' ref $ _2 .~ True
+                    loop ref
+                  Just _  -> do
+                    (!acc', !xs) <- f acc inc
+                    modifyIORef' ref $ (_3 .~ acc') . (_1 .~ xs)
+                    loop ref
 
 

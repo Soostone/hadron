@@ -1,11 +1,14 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE RankNTypes            #-}
+{-# LANGUAGE TemplateHaskell       #-}
 
 module Hadron.Protocol
     (
       Protocol (..)
     , Protocol'
+    , protoEnc, protoDec
+    , protoEncIS
     , prismToProtocol
 
     , base64SerProtocol
@@ -38,19 +41,21 @@ module Hadron.Protocol
 -------------------------------------------------------------------------------
 import           Blaze.ByteString.Builder
 import           Control.Category
+import           Control.Concurrent.Async
 import           Control.Error
 import           Control.Lens
 import           Control.Monad
-import qualified Data.ByteString.Base64   as Base64
-import qualified Data.ByteString.Char8    as B
+import qualified Data.ByteString.Base64       as Base64
+import qualified Data.ByteString.Char8        as B
 import           Data.CSV.Conduit
 import           Data.Monoid
-import qualified Data.SafeCopy            as SC
-import qualified Data.Serialize           as Ser
+import qualified Data.SafeCopy                as SC
+import qualified Data.Serialize               as Ser
 import           Data.String
-import           Prelude                  hiding (id, (.))
-import           System.IO.Streams        (InputStream, OutputStream)
-import qualified System.IO.Streams        as S
+import           Prelude                      hiding (id, (.))
+import           System.IO.Streams            (InputStream, OutputStream)
+import qualified System.IO.Streams            as S
+import qualified System.IO.Streams.Concurrent as S
 -------------------------------------------------------------------------------
 import           Hadron.Streams
 import           Hadron.Types
@@ -72,16 +77,25 @@ type Protocol' a = Protocol B.ByteString a
 --
 -- Most of the time we'll be using 'Protocol\''s.
 data Protocol b a = Protocol {
-      protoEnc :: OutputStream b -> IO (OutputStream a)
-    , protoDec :: InputStream b  -> IO (InputStream a)
+      _protoEnc :: OutputStream b -> IO (OutputStream a)
+    , _protoDec :: InputStream b  -> IO (InputStream a)
     }
-
+makeLenses ''Protocol
 
 instance Category Protocol where
     id = Protocol return return
-    p1 . p2 = Protocol { protoEnc = \ o -> protoEnc p2 o >>= protoEnc p1
-                       , protoDec = \ i -> protoDec p2 i >>= protoDec p1 }
+    p1 . p2 = Protocol { _protoEnc = \ o -> _protoEnc p2 o >>= _protoEnc p1
+                       , _protoDec = \ i -> _protoDec p2 i >>= _protoDec p1 }
 
+
+-------------------------------------------------------------------------------
+-- | Get an InputStream based encode action out of the protocol.
+protoEncIS :: Protocol b a -> InputStream a -> IO (InputStream b)
+protoEncIS p is = do
+    (is', os') <- S.makeChanPipe
+    os'' <- (p ^. protoEnc) os'
+    async $ S.connect is os''
+    return is'
 
 
 -------------------------------------------------------------------------------
@@ -92,8 +106,8 @@ instance Category Protocol where
 -- work properly.
 prismToProtocol :: Prism' B.ByteString a -> Protocol' a
 prismToProtocol p =
-    Protocol { protoEnc = \ i -> S.contramap (write . review p) i
-             , protoDec = \ i -> mapMaybeS (preview p) =<< streamLines i }
+    Protocol { _protoEnc = \ i -> S.contramap (write . review p) i
+             , _protoDec = \ i -> mapMaybeS (preview p) =<< streamLines i }
   where
     write x = toByteString $ fromByteString x `mappend` nl
     nl = fromByteString "\n"
@@ -108,8 +122,8 @@ idProtocol = id
 
 -- | A simple serialization strategy that works on lines of strings.
 linesProtocol :: Protocol' B.ByteString
-linesProtocol = Protocol { protoEnc = S.contramap (\x -> B.concat [x, "\n"])
-                         , protoDec = streamLines }
+linesProtocol = Protocol { _protoEnc = S.contramap (\x -> B.concat [x, "\n"])
+                         , _protoDec = streamLines }
 
 
 -------------------------------------------------------------------------------
