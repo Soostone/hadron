@@ -108,7 +108,7 @@ data PartitionStrategy
       , partSegs :: Int
       -- ^ First N key segments used for partitioning.
       }
-    -- ^ Expect a composite key emitted form the 'Mapper'.
+    -- ^ Expect a composite key emitted from the 'Mapper'.
 
 
 instance Default PartitionStrategy where def = NoPartition

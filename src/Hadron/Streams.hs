@@ -1,5 +1,6 @@
 {-# LANGUAGE BangPatterns    #-}
 {-# LANGUAGE RankNTypes      #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TemplateHaskell #-}
 
 module Hadron.Streams where
@@ -153,6 +154,13 @@ outputStreamToConsumer s = go
             Just _  -> go
 
 
+data EmitAcc x a = EmitAcc {
+      _acBuffer :: [x]
+    , _acDone   :: ! Bool
+    , _acAcc    :: ! a
+    }
+makeLenses ''EmitAcc
+
 
 -------------------------------------------------------------------------------
 -- | Fold while also possibly returning elements to emit each step.
@@ -164,34 +172,33 @@ emitFoldM
     -> InputStream i
     -> IO (InputStream a, IO b)
 emitFoldM f a0 is = do
-    ref <- newIORef ([], False, a0)
+    ref <- newIORef $ EmitAcc [] False a0
     is' <- S.makeInputStream (loop ref)
-    return (is', liftM (view _3) (readIORef ref))
+    return (is', liftM _acAcc (readIORef ref))
 
   where
 
     loop ref = do
-        (!buffer, !eof, !acc) <- readIORef ref
+        !EmitAcc{..} <- readIORef ref
 
-        case buffer of
+        case _acBuffer of
 
           -- previous results in buffer; stream them out
           (x:rest) -> do
-              modifyIORef' ref (_1 .~ rest)
+              modifyIORef' ref $ acBuffer .~ rest
               return (Just x)
 
           -- buffer empty; step the input stream
           [] -> do
-            case eof of
+            case _acDone of
               True -> return Nothing
               False -> do
                 inc <- S.read is
-                (!acc', !xs) <- f acc inc
+                (!acc', !xs) <- f _acAcc inc
                 modifyIORef' ref $
-                  (_3 .~ acc') . (_1 .~ xs) .
-                  if isNothing inc
-                    then _2 .~ True
-                    else id
+                  (acAcc .~ acc') .
+                  (acBuffer .~ xs) .
+                  if isNothing inc then acDone .~ True else id
                 loop ref
 
 

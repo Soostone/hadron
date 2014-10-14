@@ -57,6 +57,7 @@ module Hadron.Controller
     , CompositeKey
     , SingleKey (..)
     , WrapSerialize (..)
+    , WrapSafeCopy (..)
 
     -- * Data Sources
     , Tap (..)
@@ -130,6 +131,7 @@ import           Data.List
 import qualified Data.Map.Strict           as M
 import           Data.Monoid
 import           Data.RNG
+import           Data.SafeCopy
 import           Data.Serialize
 import qualified Data.Text                 as T
 import           Data.Text.Encoding
@@ -157,8 +159,12 @@ import           Hadron.Types
 newtype SingleKey a = SingleKey { unKey :: a }
     deriving (Eq,Show,Read,Ord,Serialize)
 
-newtype WrapSerialize a = WS { _getSerialized :: a }
+newtype WrapSerialize a = WrapSerialize { _getSerialized :: a }
     deriving (Eq,Show,Read,Ord,Serialize)
+
+newtype WrapSafeCopy a = WrapSafeCopy { _getSafeCopy :: a }
+    deriving (Eq,Show,Read,Ord,SafeCopy)
+
 
 -- mrKeyError :: Int -> Int -> a
 -- mrKeyError i n =
@@ -212,7 +218,14 @@ instance Serialize a => MRKey (WrapSerialize a) where
     toCompKey = toCompKey . (^. re pSerialize) . _getSerialized
     keyParser = do
         a <- (^? pSerialize) <$> keyParser
-        maybe (fail "Can't decode WrapSerialize") (return . WS) a
+        maybe (fail "Can't decode WrapSerialize") (return . WrapSerialize) a
+    numKeys _ = 1
+
+instance SafeCopy a => MRKey (WrapSafeCopy a) where
+    toCompKey = toCompKey . (^. re pSafeCopy) . _getSafeCopy
+    keyParser = do
+        a <- (^? pSafeCopy) <$> keyParser
+        maybe (fail "Can't decode WrapSerialize") (return . WrapSafeCopy) a
     numKeys _ = 1
 
 utcFormat :: String
