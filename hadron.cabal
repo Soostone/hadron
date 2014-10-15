@@ -23,6 +23,7 @@ library
     Hadron.Run.Hadoop
     Hadron.Run.Local
     Hadron.Streams
+    Hadron.Streams.Bounded
     Hadron.Types
 
   build-depends:       

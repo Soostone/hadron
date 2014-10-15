@@ -45,19 +45,19 @@ import           Control.Concurrent.Async
 import           Control.Error
 import           Control.Lens
 import           Control.Monad
-import qualified Data.ByteString.Base64       as Base64
-import qualified Data.ByteString.Char8        as B
+import qualified Data.ByteString.Base64   as Base64
+import qualified Data.ByteString.Char8    as B
 import           Data.CSV.Conduit
 import           Data.Monoid
-import qualified Data.SafeCopy                as SC
-import qualified Data.Serialize               as Ser
+import qualified Data.SafeCopy            as SC
+import qualified Data.Serialize           as Ser
 import           Data.String
-import           Prelude                      hiding (id, (.))
-import           System.IO.Streams            (InputStream, OutputStream)
-import qualified System.IO.Streams            as S
-import qualified System.IO.Streams.Concurrent as S
+import           Prelude                  hiding (id, (.))
+import           System.IO.Streams        (InputStream, OutputStream)
+import qualified System.IO.Streams        as S
 -------------------------------------------------------------------------------
 import           Hadron.Streams
+import qualified Hadron.Streams.Bounded   as S
 import           Hadron.Types
 -------------------------------------------------------------------------------
 
@@ -92,7 +92,7 @@ instance Category Protocol where
 -- | Get an InputStream based encode action out of the protocol.
 protoEncIS :: Protocol b a -> InputStream a -> IO (InputStream b)
 protoEncIS p is = do
-    (is', os') <- S.makeChanPipe
+    (is', os') <- S.makeChanPipe 64
     os'' <- (p ^. protoEnc) os'
     async $ S.connect is os''
     return is'
