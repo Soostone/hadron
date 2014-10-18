@@ -210,12 +210,6 @@ pShow = prism
           (\x -> maybe (Left x) Right . readMay . B.unpack $ x)
 
 
-
-
-
-
-
-
 -- | Parse lines of (key,value) for hadoop reduce stage
 lineC
     :: Int

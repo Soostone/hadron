@@ -194,6 +194,7 @@ encodeMapOutput mrInPrism (k, v) = toByteString conv
 
 
 -------------------------------------------------------------------------------
+-- | Chunk 'stdin' into lines and try to decode the value using given 'Prism'.
 decodeReducerInput
     :: MROptions
     -> Prism' B.ByteString b
@@ -203,6 +204,7 @@ decodeReducerInput mro mrInPrism =
     mapMaybeS (_2 (firstOf mrInPrism))
 
 
+-------------------------------------------------------------------------------
 -- | An easy way to construct a reducer pogram. Just supply the
 -- arguments and you're done.
 reducer
@@ -225,24 +227,24 @@ reducer mro@MROptions{..} mrInPrism f = do
         Just _ -> S.write i S.stdout
         Nothing -> return ()
 
-    go2 i = do
-        next <- S.peek i
+    go2 is = do
+        next <- S.peek is
         case next of
           Nothing -> S.write Nothing S.stdout
           Just _ -> do
-           inp <- isolateSameKey i
-           out <- mkOut
-           f inp out
-           go2 i
+           is' <- isolateSameKey is
+           os <- mkOut
+           f is' os
+           go2 is
 
-    isolateSameKey i = do
+    isolateSameKey is = do
         ref <- newIORef Nothing
-        S.makeInputStream (block ref i)
+        S.makeInputStream (block ref is)
 
 
-    block ref i = do
+    block ref is = do
         cur <- readIORef ref
-        next <- S.read i
+        next <- S.read is
         case next of
           Nothing -> return Nothing
           Just x@(k,_) ->
@@ -251,7 +253,7 @@ reducer mro@MROptions{..} mrInPrism f = do
                 let n = eqSegs _mroPart
                 case take n curKey == take n k of
                   True -> return $ Just x
-                  False -> S.unRead x i >> return Nothing
+                  False -> S.unRead x is >> return Nothing
               Nothing -> do
                 writeIORef ref (Just k)
                 return $ Just x

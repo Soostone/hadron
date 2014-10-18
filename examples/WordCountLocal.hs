@@ -7,12 +7,14 @@ module Main where
 
 -------------------------------------------------------------------------------
 import           Control.Category
+import           Control.Lens
+import           Control.Monad
 import qualified Data.ByteString.Char8 as B
-import           Data.Conduit
-import qualified Data.Conduit.List     as C
 import           Data.CSV.Conduit
 import           Data.Default
+import           Hadron.Streams
 import           Prelude               hiding ((.))
+import qualified System.IO.Streams     as S
 -------------------------------------------------------------------------------
 import           Hadron.Controller
 -------------------------------------------------------------------------------
@@ -25,7 +27,7 @@ main = hadoopMain app (LocalRun def) RSReRun
 -- notice how path is a file
 source = do
     t <- binaryDirTap "data" (== "data/sample.csv")
-    return t { proto = csvProtocol def . proto t }
+    return $ t & proto %~ (csvProtocol def . )
 
 
 -- notice how path is a folder
@@ -40,16 +42,18 @@ mr1 :: MapReduce (Row B.ByteString) (Row B.ByteString)
 mr1 = MapReduce def pSerialize mapper' Nothing reducer'
 
 
-mapper':: Monad m => Conduit (Row B.ByteString) m (CompositeKey, Int)
-mapper' = C.concatMap f
-    where
-      f ln = concatMap (map (\w -> ([w], 1 :: Int)) . B.words) ln
+-------------------------------------------------------------------------------
+mapper':: Mapper (Row B.ByteString) CompositeKey Int
+mapper' is os = bindStream is go >>= S.connectTo os
+  where
+    go ln = S.fromList $
+            concatMap (map (\w -> ([w], 1 :: Int)) . B.words) ln
 
 
 reducer' :: Reducer CompositeKey Int (Row B.ByteString)
-reducer' = do
-  (!w, !cnt) <- C.fold (\ (_, !cnt) ([k], !x) -> (k, cnt + x)) ("", 0)
-  yield $ [w, B.pack . show $ cnt]
+reducer' is os = do
+  (!w, !cnt) <- S.fold (\ (_, !cnt) ([k], !x) -> (k, cnt + x)) ("", 0) is
+  S.write (Just [w, B.pack . show $ cnt]) os
 
 
 app :: Controller ()
@@ -64,11 +68,13 @@ app = do
 mr2 :: MapReduce (Row B.ByteString) (Row B.ByteString)
 mr2 = MapReduce def pSerialize m Nothing r
     where
-      m :: Mapper (Row B.ByteString) (SingleKey String) Int
-      m = C.map (const $ (SingleKey "count", 1))
+      m :: Mapper (Row B.ByteString) String Int
+      m is os = do
+        is' <- S.map (const $ ("count", 1)) is
+        S.connect is' os
 
-      r :: Reducer (SingleKey String) Int (Row B.ByteString)
-      r = do
-          cnt <- C.fold (\ !m (_, !i) -> m + i) 0
-          yield $ ["Total Count", (B.pack . show) cnt]
+      r :: Reducer (String) Int (Row B.ByteString)
+      r is os = do
+          cnt <- S.fold (\ !m (_, !i) -> m + i) 0 is
+          S.write (Just ["Total Count", (B.pack . show) cnt]) os
 
