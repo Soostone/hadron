@@ -787,10 +787,14 @@ instance Default RerunStrategy where
     def = RSFail
 
 
-decodeKey :: MRKey k => (CompositeKey, v) -> Maybe (k, v)
-decodeKey (k,v) = do
-    !k' <- hush $ fromCompKey k
-    return (k', v)
+-------------------------------------------------------------------------------
+-- | Decode key produced by the Map stage. Errors are simply raised as
+-- key marshalling errors are unacceptable.
+decodeKey :: MRKey k => (CompositeKey, v) -> (k, v)
+decodeKey (k,v) = (k', v)
+  where
+    k' = either mkErr id $ fromCompKey k
+    mkErr e = error ("Stage could not decode Map's output: " ++ show e)
 
 
 encodeKey :: MRKey k => (k, v) -> (CompositeKey, v)
@@ -933,14 +937,14 @@ workNode settings (Controller p) runToken arg = do
                 mp is' os'
 
               red = reducer mro mrInPrism $ \ is os -> do
-                is' <- mapMaybeS decodeKey is
+                is' <- S.map decodeKey is
                 os' <- enc os
                 rd is' os'
 
               comb' = case comb of
                   Nothing -> error "Unexpected: No combiner supplied."
                   Just c -> combiner mro mrInPrism $ \ is os -> do
-                    is' <- mapMaybeS decodeKey is
+                    is' <- S.map decodeKey is
                     os' <- S.contramap encodeKey os
                     c is' os'
 

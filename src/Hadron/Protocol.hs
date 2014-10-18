@@ -107,10 +107,12 @@ protoEncIS p is = do
 prismToProtocol :: Prism' B.ByteString a -> Protocol' a
 prismToProtocol p =
     Protocol { _protoEnc = \ i -> S.contramap (write . review p) i
-             , _protoDec = \ i -> mapMaybeS (preview p) =<< streamLines i }
+             , _protoDec = \ i -> S.map (mkErr . preview p) =<< streamLines i }
   where
     write x = toByteString $ fromByteString x `mappend` nl
     nl = fromByteString "\n"
+    mkErr = fromMaybe $
+            error "Unexpected: Prism could not decode incoming value."
 
 
 -------------------------------------------------------------------------------

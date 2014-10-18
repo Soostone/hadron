@@ -217,8 +217,10 @@ reducer
 reducer mro@MROptions{..} mrInPrism f = do
     setLineBuffering
 
-    decodeReducerInput mro mrInPrism
-      >>= go2
+    is <- decodeReducerInput mro mrInPrism
+    os <- mkOut
+
+    go2 is os
 
   where
 
@@ -227,15 +229,14 @@ reducer mro@MROptions{..} mrInPrism f = do
         Just _ -> S.write i S.stdout
         Nothing -> return ()
 
-    go2 is = do
+    go2 is os = do
         next <- S.peek is
         case next of
           Nothing -> S.write Nothing S.stdout
           Just _ -> do
            is' <- isolateSameKey is
-           os <- mkOut
            f is' os
-           go2 is
+           go2 is os
 
     isolateSameKey is = do
         ref <- newIORef Nothing

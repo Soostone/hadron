@@ -43,16 +43,16 @@ mr1 = MapReduce def pSerialize mapper' Nothing reducer'
 
 
 -------------------------------------------------------------------------------
-mapper':: Mapper (Row B.ByteString) CompositeKey Int
+mapper':: Mapper (Row B.ByteString) B.ByteString Int
 mapper' is os = bindStream is go >>= S.connectTo os
   where
     go ln = S.fromList $
-            concatMap (map (\w -> ([w], 1 :: Int)) . B.words) ln
+            concatMap (map (\w -> (w, 1 :: Int)) . B.words) ln
 
 
-reducer' :: Reducer CompositeKey Int (Row B.ByteString)
+reducer' :: Reducer B.ByteString Int (Row B.ByteString)
 reducer' is os = do
-  (!w, !cnt) <- S.fold (\ (_, !cnt) ([k], !x) -> (k, cnt + x)) ("", 0) is
+  (!w, !cnt) <- S.fold (\ (_, !cnt) (k, !x) -> (k, cnt + x)) ("", 0) is
   S.write (Just [w, B.pack . show $ cnt]) os
 
 
