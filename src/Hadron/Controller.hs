@@ -126,7 +126,7 @@ import           Control.Monad.State
 import qualified Data.ByteString.Char8     as B
 import           Data.ByteString.Search    as B
 import           Data.Default
-import           Data.IORef
+
 import           Data.List
 import qualified Data.Map.Strict           as M
 import           Data.Monoid
@@ -212,6 +212,12 @@ instance MRKey String where
 instance MRKey T.Text where
     toCompKey = toCompKey . encodeUtf8
     keyParser = decodeUtf8 <$> keyToken
+    numKeys _ = 1
+
+instance MRKey Int where
+    toCompKey = toCompKey . B.pack . show
+    keyParser = keyParser >>=
+        maybe (fail "Can't read Int MRKey") return . readMay
     numKeys _ = 1
 
 instance Serialize a => MRKey (WrapSerialize a) where
@@ -326,10 +332,10 @@ instance (MRKey a, MRKey b, MRKey c, MRKey d) => MRKey (a,b,c,d) where
 
 -------------------------------------------------------------------------------
 -- | Map MR output.
-(>.>) :: MapReduce a b -> (InputStream b -> IO (InputStream c)) -> MapReduce a c
+(>.>) :: MapReduce a b -> (OutputStream c -> IO (OutputStream b)) -> MapReduce a c
 (MapReduce o p m c r) >.> f = MapReduce o p m c r'
     where
-      r' i = r i >>= f
+      r' i o = f o >>= r i
 
 
 -------------------------------------------------------------------------------
@@ -337,7 +343,7 @@ instance (MRKey a, MRKey b, MRKey c, MRKey d) => MRKey (a,b,c,d) where
 (<.<) :: (InputStream a -> IO (InputStream b)) -> MapReduce b c -> MapReduce a c
 f <.< (MapReduce o p m c r) = MapReduce o p m' c r
     where
-      m' i = f i >>= m
+      m' i o = f i >>= \ i' -> m i' o
 
 -------------------------------------------------------------------------------
 -- | A packaged MapReduce step. Make one of these for each distinct
@@ -919,15 +925,24 @@ workNode settings (Controller p) runToken arg = do
           mrKey <- newMRKey
 
           let dec = head inp ^. proto . protoDec
-              enc = outp ^. proto . to protoEncIS
+              enc = outp ^. proto . protoEnc
 
-              mp' = mapperWith mrInPrism $ dec >=> mp >=> S.map encodeKey
-              red = reducer mro mrInPrism $ mapMaybeS decodeKey >=> rd >=> enc
+              mp' = mapperWith mrInPrism $ \ is os -> do
+                is' <- dec is
+                os' <- S.contramap encodeKey os
+                mp is' os'
+
+              red = reducer mro mrInPrism $ \ is os -> do
+                is' <- mapMaybeS decodeKey is
+                os' <- enc os
+                rd is' os'
 
               comb' = case comb of
                   Nothing -> error "Unexpected: No combiner supplied."
-                  Just c -> combiner mro mrInPrism $
-                    mapMaybeS decodeKey >=> c >=> S.map encodeKey
+                  Just c -> combiner mro mrInPrism $ \ is os -> do
+                    is' <- mapMaybeS decodeKey is
+                    os' <- S.contramap encodeKey os
+                    c is' os'
 
 
               -- error message maker for caught exceptions
@@ -1029,10 +1044,12 @@ joinStep fs = MapReduce mro pSerialize mp Nothing rd
 
 
       -- | get the conduit for given dataset name
-      mkMap' ds is = fromMaybe (error "Can't identify current tap in IX.") $ do
-                      t <- M.lookup ds tapIx
-                      cond <- find ((== t) . view _1) fs
-                      return $ (view _3 cond) is >>= S.map (_1 %~ toCompKey)
+      mkMap' ds = fromMaybe (error "Can't identify current tap in IX.") $ do
+          t <- M.lookup ds tapIx
+          cond <- find ((== t) . view _1) fs
+          return $ \ is os -> do
+            os' <- S.contramap (_1 %~ toCompKey) os
+            (view _3 cond) is os'
 
       mp = joinMapper getDS mkMap'
 
@@ -1189,30 +1206,26 @@ joinMR mp = MapReduce mro pSerialize mp' Nothing red
       -- Rights.
 
       mp' :: Mapper (Either a b) CompositeKey (Either v v)
-      mp' is = mp is >>= S.map modMap
+      mp' is os = do
+        os' <- S.contramap modMap os
+        mp is os'
 
       modMap (k, Left v) = (toCompKey k ++ ["1"], Left v)
       modMap (k, Right v) = (toCompKey k ++ ["2"], Right v)
 
       -- cache lefts, start emitting upon seeing the first right.
-      red is = do
-          ref <- newIORef ([], [])
-          S.makeInputStream (go is ref)
+      red is os = go []
+        where
+          go acc = do
+            inc <- S.read is
+            case inc of
+              Nothing -> return ()
 
-      go is ref = do
-          (buffer, allLefts) <- readIORef ref
-          case buffer of
-            (x:rest) -> modifyIORef' ref (_1 .~ rest) >> return (Just x)
-            [] -> do
-              inc <- S.read is
-              case inc of
-                Nothing -> return Nothing
-                Just (_, Left r) -> do
-                  modifyIORef' ref (_2 %~ (r:))
-                  go is ref
-                Just (_, Right b) -> do
-                  let buffer' = [mappend a b | a <- allLefts]
-                  modifyIORef' ref (_1 .~ buffer')
-                  go is ref
+              Just (_, Left r) -> go $! (r:acc)
+
+              Just (_, Right b) -> do
+                let xs = [mappend a b | a <- acc]
+                forM_ xs $ \ x -> S.write (Just x) os
+                go acc
 
 

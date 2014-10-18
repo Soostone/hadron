@@ -26,12 +26,12 @@ module Hadron.Join
 
 -------------------------------------------------------------------------------
 import           Control.Lens
-
+import           Control.Monad
 import qualified Data.ByteString.Char8 as B
 import           Data.Default
 import           Data.Hashable
 import qualified Data.HashMap.Strict   as HM
-import           Data.IORef
+
 import           Data.List
 import           Data.Monoid
 import           Data.Ord
@@ -125,24 +125,20 @@ joinReducer
     => [(DataSet, JoinType)]
     -- ^ Table definitions
     -> Reducer CompositeKey r r
-joinReducer fs is = do
-    ref <- newIORef (def, [])
-    S.makeInputStream $ go ref
+joinReducer fs is out = go (def, [])
   where
-    go ref = do
-        (ja, buf) <- readIORef ref
+    go (!ja, !buf) =
         case buf of
-          (x:rest) -> writeIORef ref (ja, rest) >> return (Just x)
+          (x:rest) -> do
+            S.write (Just x) out
+            go (ja, rest)
           [] -> do
-
             next <- S.read is
             case next of
-              Nothing -> writeIORef ref (ja, joinFinalize fs ja)
+              Nothing -> forM_ (joinFinalize fs ja) $ \ x -> S.write (Just x) out
               Just x -> do
-                let (ja', xs) = joinReduceStep fs ja x
-                writeIORef ref (ja', xs)
-
-            go ref
+                let (!ja', !xs) = joinReduceStep fs ja x
+                go (ja', xs)
 
 
 -------------------------------------------------------------------------------
@@ -216,10 +212,13 @@ joinMapper
     -> (DataSet -> Mapper a CompositeKey r)
     -- ^ Given a dataset, map it to a common data type
     -> Mapper a CompositeKey r
-joinMapper getDS mkMap is = do
+joinMapper getDS mkMap is out = do
     fi <- getFileName
     let ds = getDS fi
-    mkMap ds is >>= S.map (go ds)
+
+    out' <- S.contramap (go ds) out
+
+    (mkMap ds) is out'
   where
     go ds (jk, a) = (jk ++ [getDataSet ds], a)
 
@@ -250,6 +249,6 @@ joinMain
 joinMain fs getDS mkMap out = mapReduceMain joinOpts pSerialize mp rd
     where
 
-      mp is = joinMapper getDS mkMap is
+      mp is os = joinMapper getDS mkMap is os
 
-      rd is = joinReducer fs is >>= mapMaybeS (firstOf (re out))
+      rd is os = contramapMaybe (firstOf (re out)) os >>= joinReducer fs is

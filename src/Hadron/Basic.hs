@@ -147,8 +147,8 @@ mapperWith
     -> IO ()
 mapperWith p f = do
     setLineBuffering
-    i <- S.map (encodeMapOutput p) =<< f S.stdin
-    S.connect i S.stdout
+    out <- S.contramap (encodeMapOutput p) S.stdout
+    f S.stdin out
 
 
 -------------------------------------------------------------------------------
@@ -160,11 +160,9 @@ combiner
 combiner mro mrInPrism f  = do
     setLineBuffering
 
-    i <- decodeReducerInput mro mrInPrism
-      >>= f
-      >>= S.map (encodeMapOutput mrInPrism)
-
-    S.connect i S.stdout
+    inp <- decodeReducerInput mro mrInPrism
+    out <- S.contramap (encodeMapOutput mrInPrism) S.stdout
+    f inp out
 
 
 
@@ -195,6 +193,7 @@ encodeMapOutput mrInPrism (k, v) = toByteString conv
       nl = fromByteString "\n"
 
 
+-------------------------------------------------------------------------------
 decodeReducerInput
     :: MROptions
     -> Prism' B.ByteString b
@@ -202,7 +201,6 @@ decodeReducerInput
 decodeReducerInput mro mrInPrism =
     lineC (numSegs (_mroPart mro)) S.stdin >>=
     mapMaybeS (_2 (firstOf mrInPrism))
-
 
 
 -- | An easy way to construct a reducer pogram. Just supply the
@@ -222,13 +220,19 @@ reducer mro@MROptions{..} mrInPrism f = do
 
   where
 
+    mkOut = S.makeOutputStream $ \ i ->
+      case i of
+        Just _ -> S.write i S.stdout
+        Nothing -> return ()
+
     go2 i = do
         next <- S.peek i
         case next of
           Nothing -> S.write Nothing S.stdout
           Just _ -> do
-           is <- f =<< isolateSameKey i
-           S.supply is S.stdout
+           inp <- isolateSameKey i
+           out <- mkOut
+           f inp out
            go2 i
 
     isolateSameKey i = do

@@ -79,8 +79,24 @@ contraMapConduit c s = S.makeOutputStream $ \ i -> case i of
 mapMaybeS  :: (a -> Maybe b) -> InputStream a -> IO (InputStream b)
 mapMaybeS f s = S.makeInputStream g
   where
-    g = S.read s >>= return . join . fmap f
+    g = do
+        next <- S.read s
+        case next of
+          Nothing -> return Nothing
+          Just a -> case f a of
+            Nothing -> g
+            a' -> return a'
 
+
+-------------------------------------------------------------------------------
+contramapMaybe :: (a -> Maybe b) -> OutputStream b -> IO (OutputStream a)
+contramapMaybe f out = S.makeOutputStream go
+    where
+      go nxt = case nxt of
+        Nothing -> S.write Nothing out
+        Just x -> case f x of
+          Nothing -> return ()
+          x' -> S.write x' out
 
 
 -- | Parse a line of input and eat a tab character that may be at the

@@ -28,7 +28,10 @@ mkKey = B.intercalate "|"
 -------------------------------------------------------------------------------
 -- | A 'Mapper' parses and converts the unbounded incoming stream of
 -- input data into a stream of (key, value) pairs.
-type Mapper a k b     = InputStream a -> IO (InputStream (k, b))
+--
+-- A mapper is responsible for signaling its own "Nothing" to signify
+-- it is done writing. Hadron will not automatically mark EOF.
+type Mapper a k b     = InputStream a -> OutputStream (k, b) -> IO ()
 
 
 -------------------------------------------------------------------------------
@@ -41,7 +44,13 @@ type Mapper a k b     = InputStream a -> IO (InputStream (k, b))
 -- will be given to individual and isolated invocations of your
 -- reducer function. This is pretty much the key abstraction provided
 -- by this framework.
-type Reducer k a r  = InputStream (k, a) -> IO (InputStream r)
+--
+-- It does not matter if you supply your own EOF signals via Nothing
+-- as Hadron will simply discard them and supply its own EOF based on
+-- when its input is finished.
+type Reducer k a r  = InputStream (k, a) -> OutputStream r -> IO ()
+
+
 
 
 -------------------------------------------------------------------------------
