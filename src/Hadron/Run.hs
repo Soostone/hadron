@@ -158,6 +158,7 @@ hdfsCat env fp = case env of
 
 
 -------------------------------------------------------------------------------
+-- | Copy a file from HDFS into local.
 hdfsGet :: RunContext -> FilePath -> IO LocalFile
 hdfsGet env fp = do
     local <- L.randomFileName

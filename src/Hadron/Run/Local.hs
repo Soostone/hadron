@@ -92,7 +92,7 @@ localMapReduce ls mrKey token H.HadoopRunOpts{..} = do
       "Launching Hadoop job for MR key: " <> mrKey
 
 
-    expandedInput <- liftIO $ forM mrsInput $ \ inp ->
+    expandedInput <- liftIO $ liftM concat $ forM mrsInput $ \ inp ->
       withLocalFile ls (LocalFile inp) $ \ fp -> do
         chk <- doesDirectoryExist fp
         case chk of
@@ -103,22 +103,37 @@ localMapReduce ls mrKey token H.HadoopRunOpts{..} = do
                    $ filter (not . flip elem [".", ".."]) fs
 
 
+    let enableCompress = case mrsCompress of
+          Nothing -> False
+          Just x -> isInfixOf "Gzip" x
+
+        -- Are the input files already compressed?
+        inputCompressed = all (isInfixOf ".gz") expandedInput
+
+
     outFile <- liftIO $ withLocalFile ls (LocalFile mrsOutput) $ \ fp ->
       case fp ^. extension . to null of
         False -> return fp
         True -> do
           createDirectoryIfMissing True fp
-          return $ fp </> "0000.out"
+          return $ fp </> ("0000.out" ++ if enableCompress then ".gz" else "")
 
 
-    let infiles = intercalate " " $ concat expandedInput
+    let infiles = intercalate " " expandedInput
 
         pipe = " | "
 
-        command = "cat " <> infiles <> pipe <>
+        maybeCompress = if enableCompress
+                        then  pipe <> "gzip"
+                        else ""
+
+        command =
+          "cat " <> infiles <> pipe <>
+          (if inputCompressed then ("gunzip" <> pipe) else "") <>
           exPath <> " " <> token <> " " <> "mapper_" <> mrKey <> pipe <>
           ("sort -t$'\t' -k1," <> show (H.numSegs mrsPart)) <> pipe <>
           exPath <> " " <> token <> " " <> "reducer_" <> mrKey <>
+          maybeCompress <>
           " > " <> outFile
 
     liftIO $ infoM "Hadron.Run.Local" $
