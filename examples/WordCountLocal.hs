@@ -40,15 +40,15 @@ mr1 :: MapReduce (Row B.ByteString) (Row B.ByteString)
 mr1 = MapReduce def pSerialize mapper' Nothing reducer'
 
 
-mapper':: Monad m => Conduit (Row B.ByteString) m (CompositeKey, Int)
+mapper':: Monad m => Conduit (Row B.ByteString) m (B.ByteString, Int)
 mapper' = C.concatMap f
     where
-      f ln = concatMap (map (\w -> ([w], 1 :: Int)) . B.words) ln
+      f ln = concatMap (map (\w -> (w, 1 :: Int)) . B.words) ln
 
 
-reducer' :: Reducer CompositeKey Int (Row B.ByteString)
+reducer' :: Reducer B.ByteString Int (Row B.ByteString)
 reducer' = do
-  (!w, !cnt) <- C.fold (\ (_, !cnt) ([k], !x) -> (k, cnt + x)) ("", 0)
+  (!w, !cnt) <- C.fold (\ (_, !cnt) (k, !x) -> (k, cnt + x)) ("", 0)
   yield $ [w, B.pack . show $ cnt]
 
 
@@ -64,10 +64,10 @@ app = do
 mr2 :: MapReduce (Row B.ByteString) (Row B.ByteString)
 mr2 = MapReduce def pSerialize m Nothing r
     where
-      m :: Mapper (Row B.ByteString) (SingleKey String) Int
-      m = C.map (const $ (SingleKey "count", 1))
+      m :: Mapper (Row B.ByteString) String Int
+      m = C.map (const $ ("count", 1))
 
-      r :: Reducer (SingleKey String) Int (Row B.ByteString)
+      r :: Reducer String Int (Row B.ByteString)
       r = do
           cnt <- C.fold (\ !m (_, !i) -> m + i) 0
           yield $ ["Total Count", (B.pack . show) cnt]
