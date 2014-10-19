@@ -218,9 +218,8 @@ reducer mro@MROptions{..} mrInPrism f = do
     setLineBuffering
 
     is <- decodeReducerInput mro mrInPrism
-    os <- mkOut
 
-    go2 is os
+    go2 is
 
   where
 
@@ -229,19 +228,22 @@ reducer mro@MROptions{..} mrInPrism f = do
         Just _ -> S.write i S.stdout
         Nothing -> return ()
 
-    go2 is os = do
+    go2 is = do
         next <- S.peek is
         case next of
           Nothing -> S.write Nothing S.stdout
           Just _ -> do
+           os <- mkOut
            is' <- isolateSameKey is
            f is' os
-           go2 is os
+           go2 is
 
     isolateSameKey is = do
         ref <- newIORef Nothing
         S.makeInputStream (block ref is)
 
+
+    n = eqSegs _mroPart
 
     block ref is = do
         cur <- readIORef ref
@@ -251,12 +253,11 @@ reducer mro@MROptions{..} mrInPrism f = do
           Just x@(k,_) ->
             case cur of
               Just curKey -> do
-                let n = eqSegs _mroPart
-                case take n curKey == take n k of
+                case curKey == take n k of
                   True -> return $ Just x
                   False -> S.unRead x is >> return Nothing
               Nothing -> do
-                writeIORef ref (Just k)
+                writeIORef ref (Just (take n k))
                 return $ Just x
 
 

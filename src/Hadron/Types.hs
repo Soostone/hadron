@@ -30,7 +30,8 @@ mkKey = B.intercalate "|"
 -- input data into a stream of (key, value) pairs.
 --
 -- A mapper is responsible for signaling its own "Nothing" to signify
--- it is done writing. Hadron will not automatically mark EOF.
+-- it is done writing. Hadron will not automatically mark EOF on the
+-- OutputStream, which is basically 'stdout'.
 type Mapper a k b     = InputStream a -> OutputStream (k, b) -> IO ()
 
 
@@ -42,12 +43,12 @@ type Mapper a k b     = InputStream a -> OutputStream (k, b) -> IO ()
 -- conduit you supply here) will see ONLY keys that are deemed
 -- 'equivalent' based on the 'MROptions' you supply. Different keys
 -- will be given to individual and isolated invocations of your
--- reducer function. This is pretty much the key abstraction provided
--- by this framework.
+-- reducer function. This is a very central abstraction (and one of
+-- the few major ones) provided by this framework.
 --
 -- It does not matter if you supply your own EOF signals via Nothing
--- as Hadron will simply discard them and supply its own EOF based on
--- when its input is finished.
+-- as Hadron will simply discard them before relaying over to 'stdout'
+-- and supply its own EOF based on when its input is finished.
 type Reducer k a r  = InputStream (k, a) -> OutputStream r -> IO ()
 
 

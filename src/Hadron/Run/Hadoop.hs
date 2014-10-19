@@ -104,9 +104,10 @@ data PartitionStrategy
     -- ^ Expect a single key segment emitted from the 'Mapper'.
     | Partition {
         keySegs  :: Int
-      -- ^ Total segments comprising a key
+      -- ^ Total segments comprising a key.
       , partSegs :: Int
-      -- ^ First N key segments used for partitioning.
+      -- ^ First N key segments used for partitioning. All keys that
+      -- share these segments will be routed to the same reducer.
       }
     -- ^ Expect a composite key emitted from the 'Mapper'.
 
