@@ -1,62 +1,51 @@
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE TemplateHaskell       #-}
 
 module Main where
 
 
 -------------------------------------------------------------------------------
+import           Control.Arrow
 import           Control.Lens
-import qualified Data.ByteString.Char8               as B
-import qualified Data.HashMap.Strict                 as HM
+import qualified Data.ByteString.Char8                as B
+import           Data.DeriveTH
+import qualified Data.HashMap.Strict                  as HM
+import           Data.List
 import           Data.Monoid
-import qualified Data.Vector                         as V
-import           Test.Framework.Providers.SmallCheck
+import           Data.Ord
+import           Data.Time
+import qualified Data.Vector                          as V
+import           Test.Framework
+import           Test.Framework.Providers.HUnit
+import           Test.Framework.Providers.QuickCheck2
 import           Test.Framework.Runners.Console
-import           Test.SmallCheck                     hiding (over)
-import           Test.SmallCheck.Drivers
-import           Test.SmallCheck.Series
+import           Test.HUnit
+import           Test.QuickCheck
+import           Test.QuickCheck.Property
 -------------------------------------------------------------------------------
 import           Hadron.Basic
+import           Hadron.Controller
 import           Hadron.Join
 -------------------------------------------------------------------------------
 
 
 main = defaultMain
-       [ testProperty "bufToStr" prop_bufToStr
-       ]
-
-
-instance (Monad m, Serial m a) => Serial m (JoinAcc a) where
-    series = cons2 (\ dataSets objects -> Buffering (HM.fromList (zip (map B.pack dataSets) objects)) Nothing)
-
-instance (Monad m) => Serial m (JoinType) where
-    series = cons0 JRequired \/ cons0 JOptional
-
-instance Serial m a => Serial m (Sum a) where
-    series = newtypeCons Sum
+  [ testProperty "MRKey UTCTime instance obeys ordering" prop_utcMrKeySort
+  ]
 
 
 -------------------------------------------------------------------------------
-prop_bufToStr :: [(String, JoinType, [Sum Int])] -> Property IO
-prop_bufToStr ds = valid ==> prop0
-  where
-    ds' = over (traverse._1) B.pack ds
+prop_utcMrKeySort :: [UTCTime] -> Bool
+prop_utcMrKeySort ds = sortBy (comparing fst) ds' == sortBy (comparing snd) ds'
+    where
+      ds' = map (id &&& toCompKey) ds
 
-    valid = not (null ds)
 
-    nms = map (view _1) ds'
-    types = map (view _2) ds'
-    objs = map (view _3) ds'
-    defs = zip nms types
+-------------------------------------------------------------------------------
+instance Arbitrary DiffTime where
+  arbitrary = secondsToDiffTime `fmap` arbitrary
 
-    ja = Buffering (HM.fromList (zip nms objs)) Nothing
 
-    prop0 = all (== JRequired) types ==> stemLen == combs
-    -- prop1 = all (== JOptional) types ==> stemLen > 0
-
-    stemLen = V.length (strStems str)
-    combs = let ns = map length $ HM.elems $ bufData ja
-            in if null ns then 0 else product ns
-
-    str = bufToStr defs ja
+$(derives [makeArbitrary] [''UTCTime, ''Day])
 

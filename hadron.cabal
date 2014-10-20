@@ -108,5 +108,31 @@ executable local-example
 
 
 
+test-suite test
+  type: exitcode-stdio-1.0
+  main-is: Tests.hs
+  ghc-options: -Wall -threaded -rtsopts -O0
+  hs-source-dirs: test
+
+  Build-depends:
+      base
+    , hadron
+    , vector
+    , bytestring
+    , unordered-containers
+    , lens
+    , time
+    , HUnit
+    , QuickCheck
+    , test-framework
+    , test-framework-hunit
+    , test-framework-quickcheck2
+    , derive
+
+
+  default-language:    Haskell2010
+
+
+
 
 
