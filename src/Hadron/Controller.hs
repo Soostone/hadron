@@ -114,41 +114,45 @@ module Hadron.Controller
 -------------------------------------------------------------------------------
 import           Control.Applicative
 import           Control.Arrow
+import           Control.Concurrent.Async
+import           Control.Concurrent.Chan
+import           Control.Concurrent.QSem
 import           Control.Error
 import           Control.Exception.Lens
 import           Control.Lens
 import           Control.Monad.Catch
-import           Control.Monad.Operational hiding (view)
-import qualified Control.Monad.Operational as O
+import           Control.Monad.Operational    hiding (view)
+import qualified Control.Monad.Operational    as O
 import           Control.Monad.State
-import qualified Data.ByteString.Char8     as B
-import           Data.ByteString.Search    as B
+import qualified Data.ByteString.Char8        as B
+import           Data.ByteString.Search       as B
 import           Data.Default
 import           Data.List
-import qualified Data.Map.Strict           as M
+import qualified Data.Map.Strict              as M
 import           Data.Monoid
 import           Data.RNG
 import           Data.SafeCopy
 import           Data.Serialize
-import qualified Data.Text                 as T
+import qualified Data.Text                    as T
 import           Data.Text.Encoding
 import           Data.Time
 import           Data.Typeable
 import           System.Environment
 import           System.FilePath.Lens
 import           System.IO
-import           System.IO.Streams         (InputStream, OutputStream)
-import qualified System.IO.Streams         as S
+import           System.IO.Streams            (InputStream, OutputStream)
+import qualified System.IO.Streams            as S
+import qualified System.IO.Streams.Concurrent as S
 import           System.Locale
 import           Text.Parsec
 -------------------------------------------------------------------------------
-import           Hadron.Basic              hiding (mapReduce)
+import           Hadron.Basic                 hiding (mapReduce)
 import           Hadron.Join
 import           Hadron.Logger
 import           Hadron.Protocol
 import           Hadron.Run
-import           Hadron.Run.Hadoop         (mrsInput, mrsJobName, mrsNumReduce,
-                                            mrsOutput)
+import           Hadron.Run.Hadoop            (mrsInput, mrsJobName,
+                                               mrsNumReduce, mrsOutput)
 import           Hadron.Streams
 import           Hadron.Types
 -------------------------------------------------------------------------------
@@ -408,7 +412,21 @@ readTap rc t = do
     let fs' = filter (\ fp -> not  $ elem (fp ^. filename) [".", ".."]) fs
     S.toList =<< liftIO . (t ^. proto . protoDec) =<< inp fs'
     where
-      inp fs = forM fs (hdfsCat rc) >>= S.concatInputStreams
+
+      pullOne sem chan fp = bracket_ (waitQSem sem) (signalQSem sem) $ do
+        a <- hdfsCat rc fp
+        writeChan chan (Just a)
+
+      inp :: [FilePath] -> IO (InputStream B.ByteString)
+      inp fs = do
+        sem <- newQSem 10
+        chan <- newChan
+        a <- async $ do
+          mapConcurrently (pullOne sem chan) fs
+          writeChan chan Nothing
+        link a
+        iss <- S.chanToInput chan
+        bindStream iss return
 
 
 ------------------------------------------------------------------------------
