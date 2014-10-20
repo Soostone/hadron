@@ -47,8 +47,10 @@ module Hadron.Basic
     -- * Low-level Utilities
     , mapper
     , mapperWith
+    , mapOnly
     , combiner
     , reducer
+    , setLineBuffering
 
     -- * Data Serialization Utilities
     , module Hadron.Protocol
@@ -104,10 +106,10 @@ emitCounter grp counter inc = LB.hPutStrLn stderr $ toLazyByteString txt
 
 -- | Emit counter from this library's group
 hsEmitCounter :: B.ByteString -> Integer -> IO ()
-hsEmitCounter = emitCounter "hadron"
+hsEmitCounter = emitCounter "Hadron"
 
 
--- | Emit a status line
+-- | Emit a status line.
 emitStatus :: B.ByteString -> IO ()
 emitStatus msg = LB.hPutStrLn stderr $ toLazyByteString txt
     where
@@ -149,6 +151,16 @@ mapperWith p f = do
     setLineBuffering
     out <- S.contramap (encodeMapOutput p) S.stdout
     f S.stdin out
+
+
+-------------------------------------------------------------------------------
+-- | Drop the key and simply output the value stream.
+mapOnly
+    :: (InputStream B.ByteString -> OutputStream B.ByteString -> IO ())
+    -> IO ()
+mapOnly f = do
+    setLineBuffering
+    f S.stdin S.stdout
 
 
 -------------------------------------------------------------------------------

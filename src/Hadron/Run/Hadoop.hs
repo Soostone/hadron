@@ -30,6 +30,8 @@ module Hadron.Run.Hadoop
 
     , HadoopRunOpts (..)
     , mrSettings
+    , mrsInput, mrsOutput, mrsPart, mrsNumMap, mrsNumReduce
+    , mrsCombine, mrsCompress, mrsOutSep, mrsJobName, mrsComparator
 
     , Codec
     , gzipCodec
@@ -139,35 +141,6 @@ eqSegs NoPartition = 1
 eqSegs Partition{..} = partSegs
 
 
-data HadoopRunOpts = HadoopRunOpts {
-      mrsInput      :: [String]
-    , mrsOutput     :: String
-    , mrsPart       :: PartitionStrategy
-    , mrsNumMap     :: Maybe Int
-    , mrsNumReduce  :: Maybe Int
-    , mrsCombine    :: Bool
-    , mrsCompress   :: Maybe Codec
-    , mrsOutSep     :: Maybe Char
-    -- ^ A separator to be used in reduce output. It is sometimes
-    -- useful to specify one to trick Hadoop.
-    , mrsJobName    :: Maybe String
-    , mrsComparator :: Comparator
-    }
-
-
-instance Default HadoopRunOpts where
-    def = HadoopRunOpts [] "" def Nothing Nothing False Nothing Nothing Nothing def
-
--- | A simple starting point to defining 'HadoopRunOpts'
-mrSettings
-    :: [String]
-    -- ^ Input files
-    -> String
-    -- ^ Output files
-    -> HadoopRunOpts
-mrSettings ins out = def { mrsInput = ins, mrsOutput = out }
-
-
 type Codec = String
 
 -------------------------------------------------------------------------------
@@ -180,6 +153,36 @@ snappyCodec = "org.apache.hadoop.io.compress.SnappyCodec"
 
 type MapReduceKey = String
 type RunToken = String
+
+
+data HadoopRunOpts = HadoopRunOpts {
+      _mrsInput      :: [String]
+    , _mrsOutput     :: String
+    , _mrsPart       :: PartitionStrategy
+    , _mrsNumMap     :: Maybe Int
+    , _mrsNumReduce  :: Maybe Int
+    , _mrsCombine    :: Bool
+    , _mrsCompress   :: Maybe Codec
+    , _mrsOutSep     :: Maybe Char
+    -- ^ A separator to be used in reduce output. It is sometimes
+    -- useful to specify one to trick Hadoop.
+    , _mrsJobName    :: Maybe String
+    , _mrsComparator :: Comparator
+    }
+makeLenses ''HadoopRunOpts
+
+instance Default HadoopRunOpts where
+    def = HadoopRunOpts [] "" def Nothing Nothing False Nothing Nothing Nothing def
+
+-- | A simple starting point to defining 'HadoopRunOpts'
+mrSettings
+    :: [String]
+    -- ^ Input files
+    -> String
+    -- ^ Output files
+    -> HadoopRunOpts
+mrSettings ins out = def { _mrsInput = ins, _mrsOutput = out }
+
 
 
 -------------------------------------------------------------------------------
@@ -213,10 +216,10 @@ hadoopMapReduce HadoopEnv{..} mrKey runToken HadoopRunOpts{..} = do
             comp ++ numMap ++ numRed ++ outSep ++ jobName ++
             comparator ++ part ++
             inputs ++
-            [ "-output", mrsOutput] ++
+            [ "-output", _mrsOutput] ++
             mkStage prog "mapper" ++
             mkStage prog "reducer" ++
-            if mrsCombine then mkStage prog "combiner" else [] ++
+            if _mrsCombine then mkStage prog "combiner" else [] ++
             [ "-file", exec ]
 
 
@@ -226,17 +229,17 @@ hadoopMapReduce HadoopEnv{..} mrKey runToken HadoopRunOpts{..} = do
           ]
 
       jobName = maybe [] (\nm -> ["-D", "mapred.job.name=\"" <> nm <>"\""])
-                mrsJobName
+                _mrsJobName
 
 
-      inputs = concatMap mkInput mrsInput
+      inputs = concatMap mkInput _mrsInput
       mkInput i = ["-input", i]
 
-      numMap = maybe [] (\x -> ["-D", "mapred.map.tasks=" ++ show x]) mrsNumMap
-      numRed = maybe [] (\x -> ["-D", "mapred.reduce.tasks=" ++ show x]) mrsNumReduce
+      numMap = maybe [] (\x -> ["-D", "mapred.map.tasks=" ++ show x]) _mrsNumMap
+      numRed = maybe [] (\x -> ["-D", "mapred.reduce.tasks=" ++ show x]) _mrsNumReduce
 
       comp =
-        case mrsCompress of
+        case _mrsCompress of
           Just codec -> [ "-D", "mapred.output.compress=true"
                         , "-D", "mapred.output.compression.codec=" ++ codec
                         -- , "-D", "mapred.compress.map.output=true"
@@ -244,7 +247,7 @@ hadoopMapReduce HadoopEnv{..} mrKey runToken HadoopRunOpts{..} = do
                         ]
           Nothing -> []
 
-      part = case mrsPart of
+      part = case _mrsPart of
                NoPartition -> []
                Partition{..} ->
                  [ "-D", "stream.num.map.output.key.fields=" ++ show keySegs
@@ -253,7 +256,7 @@ hadoopMapReduce HadoopEnv{..} mrKey runToken HadoopRunOpts{..} = do
                  ]
 
 
-      comparator = case mrsComparator of
+      comparator = case _mrsComparator of
                      RegularComp -> []
                      NumericComp st end rev ->
                        [ "-D", "mapred.output.key.comparator.class=org.apache.hadoop.mapred.lib.KeyFieldBasedComparator"
@@ -262,7 +265,7 @@ hadoopMapReduce HadoopEnv{..} mrKey runToken HadoopRunOpts{..} = do
                                if rev then "r" else ""
                        ]
 
-      outSep = case mrsOutSep of
+      outSep = case _mrsOutSep of
                  Nothing -> []
                  Just sep -> [ "-D", "stream.reduce.output.field.separator=" ++ [sep]
                              , "-D", "mapred.textoutputformat.separator=" ++ [sep]

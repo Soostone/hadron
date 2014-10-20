@@ -32,7 +32,7 @@ mkKey = B.intercalate "|"
 -- A mapper is responsible for signaling its own "Nothing" to signify
 -- it is done writing. Hadron will not automatically mark EOF on the
 -- OutputStream, which is basically 'stdout'.
-type Mapper a k b     = InputStream a -> OutputStream (k, b) -> IO ()
+type Mapper a k b = InputStream a -> OutputStream (k, b) -> IO ()
 
 
 -------------------------------------------------------------------------------
@@ -52,23 +52,28 @@ type Mapper a k b     = InputStream a -> OutputStream (k, b) -> IO ()
 type Reducer k a r  = InputStream (k, a) -> OutputStream r -> IO ()
 
 
+data ReduceErrorStrategy
+    = ReduceErrorReThrow
+    | ReduceErrorSkipKey
+    | ReduceErrorRetry
+    deriving (Eq,Show,Read,Ord)
 
 
 -------------------------------------------------------------------------------
 -- | Options for a single-step MR job.
 data MROptions = MROptions {
-      _mroPart       :: PartitionStrategy
+      _mroPart        :: PartitionStrategy
     -- ^ Number of segments to expect in incoming keys. Affects both
     -- hadron program's understanding of key AND Hadoop's distribution
     -- of map output to reducers.
-    , _mroComparator :: Comparator
-    , _mroNumMap     :: Maybe Int
+    , _mroComparator  :: Comparator
+    , _mroNumMap      :: Maybe Int
     -- ^ Number of map tasks; 'Nothing' leaves it to Hadoop to decide.
-    , _mroNumReduce  :: Maybe Int
+    , _mroNumReduce   :: Maybe Int
     -- ^ Number of reduce tasks; 'Nothing' leaves it to Hadoop to decide.
-    , _mroCompress   :: Maybe String
+    , _mroCompress    :: Maybe String
     -- ^ Whether to use compression on reduce output.
-    , _mroOutSep     :: Maybe Char
+    , _mroOutSep      :: Maybe Char
     -- ^ Separator to be communicated to Hadoop for the reduce output.
     -- Sets both the 'stream.reduce.output.field.separator' and
     -- 'mapred.textoutputformat.separator' parameters. Sometimes
@@ -79,23 +84,25 @@ data MROptions = MROptions {
     -- If you're outputting CSV for example, you may want to specify
     -- 'Just ,' here so that with 2 fields Hadoop will think you
     -- already have the key-value pair.
+    , _mroReduceError :: ReduceErrorStrategy
+    -- ^ What to do on reducer error.
     }
-
 
 makeLenses ''MROptions
 
 
 instance Default MROptions where
     def = MROptions NoPartition RegularComp Nothing Nothing Nothing Nothing
+          ReduceErrorReThrow
 
 
 -------------------------------------------------------------------------------
 -- | Obtain baseline Hadoop run-time options from provided step options
 mrOptsToRunOpts :: MROptions -> HadoopRunOpts
-mrOptsToRunOpts MROptions{..} = def { mrsPart = _mroPart
-                                    , mrsNumMap = _mroNumMap
-                                    , mrsNumReduce = _mroNumReduce
-                                    , mrsCompress = _mroCompress
-                                    , mrsOutSep = _mroOutSep
-                                    , mrsComparator = _mroComparator }
+mrOptsToRunOpts MROptions{..} = def { _mrsPart = _mroPart
+                                    , _mrsNumMap = _mroNumMap
+                                    , _mrsNumReduce = _mroNumReduce
+                                    , _mrsCompress = _mroCompress
+                                    , _mrsOutSep = _mroOutSep
+                                    , _mrsComparator = _mroComparator }
 

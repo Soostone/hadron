@@ -118,15 +118,12 @@ import           Control.Error
 import           Control.Exception.Lens
 import           Control.Lens
 import           Control.Monad.Catch
-
 import           Control.Monad.Operational hiding (view)
 import qualified Control.Monad.Operational as O
 import           Control.Monad.State
-
 import qualified Data.ByteString.Char8     as B
 import           Data.ByteString.Search    as B
 import           Data.Default
-
 import           Data.List
 import qualified Data.Map.Strict           as M
 import           Data.Monoid
@@ -137,7 +134,6 @@ import qualified Data.Text                 as T
 import           Data.Text.Encoding
 import           Data.Time
 import           Data.Typeable
-
 import           System.Environment
 import           System.FilePath.Lens
 import           System.IO
@@ -151,6 +147,8 @@ import           Hadron.Join
 import           Hadron.Logger
 import           Hadron.Protocol
 import           Hadron.Run
+import           Hadron.Run.Hadoop         (mrsInput, mrsJobName, mrsNumReduce,
+                                            mrsOutput)
 import           Hadron.Streams
 import           Hadron.Types
 -------------------------------------------------------------------------------
@@ -335,7 +333,9 @@ instance (MRKey a, MRKey b, MRKey c, MRKey d) => MRKey (a,b,c,d) where
 (>.>) :: MapReduce a b -> (OutputStream c -> IO (OutputStream b)) -> MapReduce a c
 (MapReduce o p m c r) >.> f = MapReduce o p m c r'
     where
-      r' i o = f o >>= r i
+      r' = case r of
+        Left r'' -> Left $ \ is os -> f os >>= r'' is
+        Right conv -> Right $ f >=> conv
 
 
 -------------------------------------------------------------------------------
@@ -357,7 +357,9 @@ data MapReduce a b = forall k v. MRKey k => MapReduce {
     -- steps.
     , _mrMapper   :: Mapper a k v
     , _mrCombiner :: Maybe (Reducer k v (k,v))
-    , _mrReducer  :: Reducer k v b
+    , _mrReducer  :: Either (Reducer k v b) (OutputStream b -> IO (OutputStream v))
+    -- ^ Either a reducer or a final value converter for a map-only
+    -- MapReduce job.
     }
 
 --------------------------------------------------------------------------------
@@ -712,7 +714,7 @@ orchestrate (Controller p) settings rr s = do
       eval' (SetVal k v) = csMRVars . at k .= Just v
       eval' (GetVal k) = use (csMRVars . at k)
 
-      eval' (Connect (MapReduce mro _ _ _ _) inp outp nm) = go'
+      eval' (Connect (MapReduce mro _ _ _ rd) inp outp nm) = go'
           where
             go' = do
                 mrKey <- newMRKey
@@ -761,12 +763,15 @@ orchestrate (Controller p) settings rr s = do
               liftIO $ hdfsPut settings local remote
 
               let mrs = mrOptsToRunOpts mro
-              launchMapReduce settings mrKey runToken
-                mrs { mrsInput = concatMap _location inp
-                    , mrsOutput = head (_location outp)
-                    , mrsJobName = nm
-                    }
+              launchMapReduce settings mrKey runToken $ mrs
+                & mrsInput .~ concatMap _location inp
+                & mrsOutput .~ head (_location outp)
+                & mrsJobName .~ nm
+                & (if onlyMap then mrsNumReduce .~ Just 0 else id)
 
+            onlyMap = case rd of
+              Left{} -> False
+              Right{} -> True
 
 
 data Phase = Map | Combine | Reduce
@@ -931,15 +936,25 @@ workNode settings (Controller p) runToken arg = do
           let dec = head inp ^. proto . protoDec
               enc = outp ^. proto . protoEnc
 
-              mp' = mapperWith mrInPrism $ \ is os -> do
+              mp' = case rd of
+                Left _ -> mapRegular
+                Right conv -> do
+                  setLineBuffering
+                  is' <- dec S.stdin
+                  os' <- S.contramap snd =<< conv =<< enc S.stdout
+                  mp is' os'
+
+              mapRegular = mapperWith mrInPrism $ \ is os -> do
                 is' <- dec is
                 os' <- S.contramap encodeKey os
                 mp is' os'
 
-              red = reducer mro mrInPrism $ \ is os -> do
-                is' <- S.map decodeKey is
-                os' <- enc os
-                rd is' os'
+              red = case rd of
+                Right _ -> error "Unexpected: Reducer called for a map-only job."
+                Left f -> reducer mro mrInPrism $ \ is os -> do
+                  is' <- S.map decodeKey is
+                  os' <- enc os
+                  f is' os'
 
               comb' = case comb of
                   Nothing -> error "Unexpected: No combiner supplied."
@@ -1006,7 +1021,7 @@ joinStep
     => [(Tap a, JoinType, Mapper a k b)]
     -- ^ Dataset definitions and how to map each dataset.
     -> MapReduce a b
-joinStep fs = MapReduce mro pSerialize mp Nothing rd
+joinStep fs = MapReduce mro pSerialize mp Nothing (Left rd)
     where
       showBS = B.pack . show
       n = numKeys (undefined :: k)
@@ -1201,7 +1216,7 @@ joinMR
     => Mapper (Either a b) k (Either v v)
     -- ^ Mapper for the input
     -> MapReduce (Either a b) v
-joinMR mp = MapReduce mro pSerialize mp' Nothing red
+joinMR mp = MapReduce mro pSerialize mp' Nothing (Left red)
     where
       mro = def { _mroPart = Partition (n+1) n }
       n = numKeys (undefined :: k)
