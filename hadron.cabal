@@ -65,6 +65,7 @@ library
      primitive,
      process,
      resourcet,
+     retry                        >= 0.5.1 && < 0.6,
      rng-utils,
      safe,
      safecopy                     >= 0.8 && < 0.9,

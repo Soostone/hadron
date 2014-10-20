@@ -124,6 +124,7 @@ import           Control.Monad.Catch
 import           Control.Monad.Operational    hiding (view)
 import qualified Control.Monad.Operational    as O
 import           Control.Monad.State
+import           Control.Retry
 import qualified Data.ByteString.Char8        as B
 import           Data.ByteString.Search       as B
 import           Data.Default
@@ -413,9 +414,14 @@ readTap rc t = do
     S.toList =<< liftIO . (t ^. proto . protoDec) =<< inp fs'
     where
 
-      pullOne sem chan fp = bracket_ (waitQSem sem) (signalQSem sem) $ do
-        a <- hdfsCat rc fp
-        writeChan chan (Just a)
+      policy = capDelay 10000000 $
+               exponentialBackoff 50000 <> limitRetries 10
+
+      pullOne sem chan fp =
+        bracket_ (waitQSem sem) (signalQSem sem) $
+        recoverAll policy $ do
+          a <- hdfsCat rc fp
+          writeChan chan (Just a)
 
       inp :: [FilePath] -> IO (InputStream B.ByteString)
       inp fs = do
