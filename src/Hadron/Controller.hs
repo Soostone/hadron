@@ -404,6 +404,14 @@ taps fp p = Tap fp p
 
 
 -------------------------------------------------------------------------------
+-- | Does given file belong to tap?
+belongsToTap :: Tap a -> FilePath -> Bool
+belongsToTap tap fn = any (`isInfixOf` fn) stem
+    where
+      stem = map (takeWhile (/= '*')) (tap ^. location)
+
+
+-------------------------------------------------------------------------------
 -- | Given a tap directory, enumerate and load all files inside.
 -- Caution: This is meant only as a way to load small files, or else
 -- you'll fill up your memory.
@@ -928,7 +936,9 @@ workNode settings (Controller p) runToken arg = do
           curId <- pickTapId
           dynLoc <- use $ tapLens curId
           case dynLoc of
-            Nothing -> error $ "Dynamic location can't be determined for MakTap at index " <> show curId
+            Nothing -> error $
+              "Dynamic location can't be determined for MakTap at index " <>
+              show curId
             Just loc' -> return $ Tap ([B.unpack loc']) proto
 
       go (BinaryDirTap loc _) = do
@@ -957,19 +967,27 @@ workNode settings (Controller p) runToken arg = do
       go (Connect (MapReduce mro mrInPrism mp comb rd) inp outp nm) = do
           mrKey <- newMRKey
 
-          let dec = head inp ^. proto . protoDec
-              enc = outp ^. proto . protoEnc
+          let dec = do
+                  fn <- getFileName
+                  let t = find (flip belongsToTap fn) inp
+                  return $ case t of
+                    Nothing -> head inp ^. proto . protoDec
+                    Just t' -> t' ^. proto . protoDec
+
+          let enc = outp ^. proto . protoEnc
 
               mp' = case rd of
                 Left _ -> mapRegular
                 Right conv -> do
                   setLineBuffering
-                  is' <- dec S.stdin
+                  dec' <- dec
+                  is' <- dec' S.stdin
                   os' <- S.contramap snd =<< conv =<< enc S.stdout
                   mp is' os'
 
               mapRegular = mapperWith mrInPrism $ \ is os -> do
-                is' <- dec is
+                dec' <- dec
+                is' <- dec' is
                 os' <- S.contramap encodeKey os
                 mp is' os'
 
@@ -1100,7 +1118,6 @@ joinStep fs = MapReduce mro pSerialize mp Nothing (Left rd)
 
 
 
-
 -------------------------------------------------------------------------------
 -- | Combine two taps intelligently into the Either sum type.
 --
@@ -1114,7 +1131,7 @@ mergeTaps ta tb = Tap (_location ta ++ _location tb) newP
 
       dec is = do
           fn <- getFileName
-          if (any (flip isInfixOf fn) (map (takeWhile (/= '*')) $ _location ta))
+          if belongsToTap ta fn
             then (ta ^. proto . protoDec) is >>= S.map Left
             else (tb ^. proto . protoDec) is >>= S.map Right
 
