@@ -29,6 +29,7 @@ library
     Hadron.Streams
     Hadron.Streams.Bounded
     Hadron.Types
+    Hadron.Utils
 
   build-depends:       
                        
@@ -78,7 +79,8 @@ library
      unix-time,                    
      unordered-containers,
      vector,
-     zlib-conduit
+     zlib-conduit,
+     split
 
   ghc-options:         -Wall -O2 
                        -fwarn-tabs

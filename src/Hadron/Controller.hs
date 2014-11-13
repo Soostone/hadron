@@ -156,6 +156,7 @@ import           Hadron.Run.Hadoop            (mrsInput, mrsJobName,
                                                mrsNumReduce, mrsOutput)
 import           Hadron.Streams
 import           Hadron.Types
+import           Hadron.Utils
 -------------------------------------------------------------------------------
 
 
@@ -418,8 +419,10 @@ belongsToTap tap fn = any (`isInfixOf` fn) stem
 readTap :: RunContext -> Tap a -> IO [a]
 readTap rc t = do
     fs <- liftIO $ concat <$> forM (_location t) (hdfsLs rc)
-    let fs' = filter (\ fp -> not  $ elem (fp ^. filename) [".", ".."]) fs
-    S.toList =<< liftIO . (t ^. proto . protoDec) =<< inp fs'
+    let chk fp = not (elem (fp ^. filePath . filename) [".", ".."]) &&
+                 (fp ^. fileSize) > 0
+    let fs' = filter chk fs
+    S.toList =<< liftIO . (t ^. proto . protoDec) =<< inp (map _filePath fs')
     where
 
       policy = capDelay 10000000 $
@@ -638,7 +641,7 @@ setupBinaryDir settings loc chk = do
     localFile <- randomLocalFile
     hdfsFile <- randomRemoteFile settings
 
-    files <- hdfsLs settings loc
+    files <- hdfsLs settings loc <&> map _filePath
     let files' = filter chk files
     withLocalFile settings localFile $ \ f -> writeFile f (unlines files')
 

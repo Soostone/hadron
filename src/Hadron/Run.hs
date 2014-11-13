@@ -79,6 +79,7 @@ import qualified System.IO.Streams      as S
 import qualified Hadron.Run.Hadoop      as H
 import           Hadron.Run.Local       (LocalFile (..))
 import qualified Hadron.Run.Local       as L
+import           Hadron.Utils
 -------------------------------------------------------------------------------
 
 
@@ -127,7 +128,7 @@ hdfsDeletePath env fp = case env of
 
 
 -------------------------------------------------------------------------------
-hdfsLs :: RunContext -> FilePath -> IO [FilePath]
+hdfsLs :: RunContext -> FilePath -> IO [File]
 hdfsLs env fp = case env of
     LocalRun env -> L.runLocal env (L.hdfsLs (LocalFile fp))
     HadoopRun env _ -> H.hdfsLs env fp

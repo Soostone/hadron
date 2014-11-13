@@ -41,7 +41,7 @@ module Hadron.Run.Hadoop
     , hadoopMapReduce
     , hdfsFileExists
     , hdfsDeletePath
-    , hdfsLs
+    , hdfsLs, parseLS
     , hdfsPut
     , hdfsMkdir
     , tmpRoot
@@ -72,6 +72,7 @@ import qualified System.IO.Streams           as S
 import           System.Process
 -------------------------------------------------------------------------------
 import           Hadron.Logger
+import           Hadron.Utils
 -------------------------------------------------------------------------------
 
 
@@ -294,7 +295,7 @@ hdfsDeletePath HadoopEnv{..} p = void $
 
 -------------------------------------------------------------------------------
 -- | List a directory's contents
-hdfsLs :: HadoopEnv -> FilePath -> IO [FilePath]
+hdfsLs :: HadoopEnv -> FilePath -> IO [File]
 hdfsLs HadoopEnv{..} p = do
     (res,out,_) <- readProcessWithExitCode _hsBin ["fs", "-lsr", p] ""
     return $ case res of
@@ -306,16 +307,15 @@ hdfsLs HadoopEnv{..} p = do
 -- | TODO: The lcs function does not guarantee contiguous-common
 -- regions, so this function may behave strangely. We should figure
 -- out a way to use longest-common-prefix like semantics.
-parseLS :: [Char] -> String -> [[Char]]
-parseLS pat out = filter isOK $ map clean $ lines out
+parseLS :: String -> String -> [File]
+parseLS pat out = filter isOK $ map clean $ mapMaybe parseLs $ lines out
   where
     pat' = T.pack pat
     prefix = takeWhile (/= '*') pat
-    isOK x = isPrefixOf prefix x
-    clean x = T.unpack $ begin `T.append` T.pack path
+    isOK x = x ^. filePath . to (isPrefixOf prefix)
+    clean f = f & filePath %~ (T.unpack begin <>)
         where
-          path = last (words x)
-          shared = T.pack $ lcs pat path
+          shared = T.pack $ lcs pat (f ^. filePath)
           (begin, _) = T.breakOn shared pat'
 
 

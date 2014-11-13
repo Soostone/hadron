@@ -43,6 +43,7 @@ import           System.Process
 -------------------------------------------------------------------------------
 import           Hadron.Logger
 import qualified Hadron.Run.Hadoop     as H
+import           Hadron.Utils
 -------------------------------------------------------------------------------
 
 
@@ -185,10 +186,10 @@ hdfsDeletePath p = do
 -------------------------------------------------------------------------------
 hdfsLs
     :: (MonadIO m, MonadReader LocalRunSettings m)
-    => LocalFile -> m [FilePath]
+    => LocalFile -> m [File]
 hdfsLs p = do
     fs <- liftIO . getDirectoryContents' =<< path p
-    return $ map (_unLocalFile p </>) fs
+    return $ map (\ p -> File "" 1 "" "" p) $ map (_unLocalFile p </>) fs
 
 
 -------------------------------------------------------------------------------

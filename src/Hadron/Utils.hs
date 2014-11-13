@@ -1,12 +1,17 @@
-{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE BangPatterns    #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 module Hadron.Utils where
 
 
 -------------------------------------------------------------------------------
+import           Control.Applicative
+import           Control.Lens
 import           Control.Monad
 import           Control.Monad.Trans
 import           Data.Conduit
+import           Data.List.Split
+import           Safe
 -------------------------------------------------------------------------------
 
 
@@ -29,3 +34,29 @@ performEvery n f = go 1
                 when (i `mod` n == 0) $ lift (f i)
                 yield $! x'
                 go $! i + 1
+
+
+
+-------------------------------------------------------------------------------
+data File = File {
+      _filePerms :: String
+    , _fileSize  :: Int
+    , _fileDate  :: String
+    , _fileTime  :: String
+    , _filePath  :: String
+    } deriving (Eq,Show,Read,Ord)
+makeLenses ''File
+
+
+parseLs :: String -> Maybe File
+parseLs str =
+    let xs = split (dropDelims . condense $ oneOf "\t ") str
+    in  File <$> xs !? 0
+             <*> (xs !? 2 >>= readMay)
+             <*> xs !? 3
+             <*> xs !? 4
+             <*> xs !? 5
+
+
+(!?) = atMay
+
