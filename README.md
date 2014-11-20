@@ -68,46 +68,7 @@ Defines data encode/decode strategies via the Protocol type.
 
 ## TODO
 
-  - Consider switching out of CSV into pipes or io-streams. Conduit
-    ecosystem is pretty wide though, which makes this a bit
-    impractical ATM.
-
-  - Allow specifying per-task re-run strategy (instead of global
-    setting)
-  
-  - Re-think the Controller design to enable:
-    - Parallel execution of non-dependent computation paths, like the
-      cabal parallel build graph
-    - Ability to chain-design MapReduce tasks before it's time to
-      supply them with Taps via connect. In other words, allow
-      MapReduce composition *outside* of the Controller monad.
-    
-  - Is there an easier way to express strongly typed multi-way joins
-    instead of the current best of "Tap (Either (Either a b) c)"?
-    - Current Best Idea: Use Fundeps to convert a :+ sum type to (,,,)
-      product type via merge. (To be further explored)
-
-  - Escape newlines instead of all-out Base64 encoding in internal
-    binary protocol (i.e. emit 0xff 0x0a for newline, and 0xff 0xff
-    for 0xff). (gregorycollins)
-    
-  - Hand-roll a parseLine function break on newlines and tab
-    characters using elemIndex. (gregorycollins)
-
-  - Make launchHadoop logging real-time
-
-  - Make a better CLI interface that can specify common hadoop
-    settings (e.g. EMR vs. Cloudera)
-
-  - Use MVector buffering with mutable growth (like in palgos) in
-    joins instead of linked lists
-
-  - Make a local orchestrate function for a non-hadoop, single-machine
-    backend via 'sort'?
-
-  - (?) Add support for parsing file locations, other settings from
-    a config file
-    
+See TODO.org.
 
 
 ## Release Notes

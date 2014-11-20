@@ -1,0 +1,16 @@
+* TODOs
+** TODO Re-run strategies should be per stage
+** TODO Make hadoop runner logging real-time instead of the current "print after run completes" due to process buffering
+** TODO Allow specifying per-task re-run strategy (instead of global setting)
+** TODO Re-think the Controller design to enable:
+*** Parallel execution of non** dependent computation paths, like the cabal parallel build graph
+*** Ability to chain-design MapReduce tasks before it's time to supply them with Taps via connect. In other words, allow MapReduce composition *outside* of the Controller monad.
+** TODO Is there an easier way to express strongly typed multi-way joins instead of the current best of "Tap (Either (Either a b) c)"? 
+*** Current Best Idea (?): Use Fundeps to convert a :+ sum type to (,,,) product type via merge
+** TODO Escape newlines instead of all-out Base64 encoding in internal binary protocol (i.e. emit 0xff 0x0a for newline, and 0xff 0xff for 0xff). (gregorycollins)
+** TODO Hand-roll a parseLine function break on newlines and tab characters using elemIndex. (gregorycollins)
+** TODO Make a better CLI interface that can specify common hadoop settings (e.g. EMR vs. Cloudera)
+** TODO Use MVector buffering with mutable growth (like in palgos) in joins instead of linked lists
+** TODO (?) Add support for parsing file locations, other settings from a config file
+** DONE Local runner should set filename ENV variable for each file
+   CLOSED: [2014-11-19 Wed 22:30]
