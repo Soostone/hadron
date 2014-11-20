@@ -65,6 +65,7 @@ module Hadron.Controller
     , tap
     , taps
     , mergeTaps
+    , concatTaps
     , binaryDirTap
     , setupBinaryDir
     , fileListTap
@@ -407,9 +408,26 @@ taps fp p = Tap fp p
 -------------------------------------------------------------------------------
 -- | Does given file belong to tap?
 belongsToTap :: Tap a -> FilePath -> Bool
-belongsToTap tap fn = any (`isInfixOf` fn) stem
+belongsToTap t fn = any (`isInfixOf` fn) stem
     where
-      stem = map (takeWhile (/= '*')) (tap ^. location)
+      stem = map (takeWhile (/= '*')) (t ^. location)
+
+
+
+-------------------------------------------------------------------------------
+concatTaps :: [Tap a] -> Tap a
+concatTaps ts = Tap locs newP
+    where
+      locs = concatMap _location ts
+      newP = Protocol enc dec
+
+      dec is = do
+          fn <- getFileName
+          case find (flip belongsToTap fn) ts of
+            Nothing -> error "Unexpected: Can't determine tap in concatTaps."
+            Just t -> (t ^. (proto . protoDec)) is
+
+      enc = head ts ^. proto . protoEnc
 
 
 -------------------------------------------------------------------------------
@@ -444,6 +462,35 @@ readTap rc t = do
         link a
         iss <- S.chanToInput chan
         bindStream iss return
+
+
+
+-------------------------------------------------------------------------------
+-- | Combine two taps intelligently into the Either sum type.
+--
+-- Matches on the prefix path given as part of each tap. It would
+-- therefore fail to work properly on self joins where the same data
+-- location is used in both taps.
+mergeTaps :: Tap a -> Tap b -> Tap (Either a b)
+mergeTaps ta tb = Tap (_location ta ++ _location tb) newP
+    where
+      newP = Protocol enc dec
+
+      dec is = do
+          fn <- getFileName
+          if belongsToTap ta fn
+            then (ta ^. proto . protoDec) is >>= S.map Left
+            else (tb ^. proto . protoDec) is >>= S.map Right
+
+      enc os = do
+          as <- (ta ^. (proto . protoEnc)) os
+          bs <- (tb ^. (proto . protoEnc)) os
+
+          S.makeOutputStream $ \ i ->
+            case i of
+              Nothing -> S.write Nothing os
+              Just (Left a) -> S.write (Just a) as
+              Just (Right a) -> S.write (Just a) bs
 
 
 ------------------------------------------------------------------------------
@@ -558,8 +605,8 @@ connect'
     -> Maybe String
     -- ^ A custom name for the job
     -> Controller (Tap b)
-connect' mr inp proto nm = do
-    out <- makeTap proto
+connect' mr inp p nm = do
+    out <- makeTap p
     connect mr inp out nm
     return out
 
@@ -573,7 +620,7 @@ connect mr inp outp nm = Controller $ singleton $ Connect mr inp outp nm
 
 -------------------------------------------------------------------------------
 makeTap :: Protocol' a -> Controller (Tap a)
-makeTap proto = Controller $ singleton $ MakeTap proto
+makeTap p = Controller $ singleton $ MakeTap p
 
 
 -------------------------------------------------------------------------------
@@ -1120,33 +1167,6 @@ joinStep fs = MapReduce mro pSerialize mp Nothing (Left rd)
       rd =  joinReducer fs'
 
 
-
--------------------------------------------------------------------------------
--- | Combine two taps intelligently into the Either sum type.
---
--- Matches on the prefix path given as part of each tap. It would
--- therefore fail to work properly on self joins where the same data
--- location is used in both taps.
-mergeTaps :: Tap a -> Tap b -> Tap (Either a b)
-mergeTaps ta tb = Tap (_location ta ++ _location tb) newP
-    where
-      newP = Protocol enc dec
-
-      dec is = do
-          fn <- getFileName
-          if belongsToTap ta fn
-            then (ta ^. proto . protoDec) is >>= S.map Left
-            else (tb ^. proto . protoDec) is >>= S.map Right
-
-      enc os = do
-          as <- (ta ^. (proto . protoEnc)) os
-          bs <- (tb ^. (proto . protoEnc)) os
-
-          S.makeOutputStream $ \ i ->
-            case i of
-              Nothing -> S.write Nothing os
-              Just (Left a) -> S.write (Just a) as
-              Just (Right a) -> S.write (Just a) bs
 
 
 

@@ -25,9 +25,9 @@ import           Control.Applicative
 import           Control.Error
 import           Control.Lens
 import           Control.Monad.Reader
-
 import qualified Data.ByteString.Char8 as B
 import           Data.Default
+import           Data.Hashable
 import           Data.List
 import           Data.Monoid
 import           Data.RNG
@@ -109,7 +109,7 @@ localMapReduce ls mrKey token H.HadoopRunOpts{..} = do
           Just x -> isInfixOf "Gzip" x
 
         -- Are the input files already compressed?
-        inputCompressed = all (isInfixOf ".gz") expandedInput
+        inputCompressed file = isInfixOf ".gz" file
 
 
     outFile <- liftIO $ withLocalFile ls (LocalFile _mrsOutput) $ \ fp ->
@@ -120,42 +120,74 @@ localMapReduce ls mrKey token H.HadoopRunOpts{..} = do
           return $ fp </> ("0000.out" ++ if enableCompress then ".gz" else "")
 
 
-    let infiles = intercalate " " expandedInput
-
-        pipe = " | "
+    let pipe = " | "
 
         maybeCompress = if enableCompress
                         then  pipe <> "gzip"
                         else ""
 
+        maybeGunzip fp = (if inputCompressed fp then ("gunzip" <> pipe) else "")
+
         maybeReducer = case _mrsNumReduce of
           Just 0 -> ""
           _ -> pipe <> exPath <> " " <> token <> " " <> "reducer_" <> mrKey
 
-        command =
-          "cat " <> infiles <> pipe <>
-          (if inputCompressed then ("gunzip" <> pipe) else "") <>
-          exPath <> " " <> token <> " " <> "mapper_" <> mrKey <> pipe <>
-          ("sort -t$'\t' -k1," <> show (H.numSegs _mrsPart)) <>
-          maybeReducer <>
-          maybeCompress <>
-          " > " <> outFile
 
-    liftIO $ infoM "Hadron.Run.Local" $
-      "Executing local command: " ++ show command
 
-    -- TODO: We must actually map over each file individually set this
-    -- env variable to each file's name at each step. This may break
-    -- some MR programs that rely on accurately knowing the name of
-    -- the file on which they are operating.
-    scriptIO $ setEnv "map_input_file" infiles True
+        -- map over each file individually and write results into a temp file
+        mapFile infile = clearExit . scriptIO . withTmpMapFile infile $ \ fp -> do
+            echoInfo ("Running command: " <> (command fp))
+            setEnv "map_input_file" infile True
+            system (command fp)
+          where
+            command fp =
+                "cat " <> infile <> pipe <>
+                maybeGunzip infile <>
+                exPath <> " " <> token <> " " <> "mapper_" <> mrKey <>
+                " > " <> fp
 
-    res <- scriptIO $ system command
+
+        -- a unique temp file for each input file
+        withTmpMapFile infile f = liftIO $
+          withLocalFile ls (LocalFile ((show (hash infile)) <> "_mapout")) f
+
+
+        -- concat all processed map output, sort and run through the reducer
+        reduceFiles infiles = do
+            fs <- mapM (flip withTmpMapFile return) infiles
+            echoInfo ("Running command: " <> (command fs))
+            clearExit $ scriptIO $ system (command fs)
+          where
+            command fs =
+                "cat " <> intercalate " " fs <> pipe <>
+                ("sort -t$'\t' -k1," <> show (H.numSegs _mrsPart)) <>
+                maybeReducer <>
+                maybeCompress <>
+                " > " <> outFile
+
+
+    liftIO $ infoM "Hadron.Run.Local" "Mapping over all local files"
+    mapM_ mapFile expandedInput
+
+    liftIO $ infoM "Hadron.Run.Local" "Executing reduce stage."
+    reduceFiles expandedInput
+
+
+-------------------------------------------------------------------------------
+echoInfo :: MonadIO m => String -> m ()
+echoInfo msg = liftIO $ infoM "Hadron.Run.Local" msg
+
+
+-------------------------------------------------------------------------------
+-- | Fail if command not successful.
+clearExit :: MonadIO m => EitherT String m ExitCode -> EitherT [Char] m ()
+clearExit f = do
+    res <- f
     case res of
-      ExitSuccess -> liftIO $ infoM "Hadron.Run.Local" "Stage complete."
+      ExitSuccess -> liftIO $ infoM "Hadron.Run.Local" "Command successful."
       e -> do
-        liftIO . errorM "Hadron.Run.Local" $ "Stage failed: " ++ show e
-        hoistEither $ Left $ "Stage failed with: " ++ show e
+        liftIO . errorM "Hadron.Run.Local" $ "Command failed: " ++ show e
+        hoistEither $ Left $ "Command failed with: " ++ show e
 
 
 -------------------------------------------------------------------------------
@@ -189,7 +221,7 @@ hdfsLs
     => LocalFile -> m [File]
 hdfsLs p = do
     fs <- liftIO . getDirectoryContents' =<< path p
-    return $ map (\ p -> File "" 1 "" "" p) $ map (_unLocalFile p </>) fs
+    return $ map (File "" 1 "" "") $ map (_unLocalFile p </>) fs
 
 
 -------------------------------------------------------------------------------
