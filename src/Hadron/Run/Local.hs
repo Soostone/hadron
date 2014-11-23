@@ -152,9 +152,11 @@ localMapReduce ls mrKey token H.HadoopRunOpts{..} = do
           withLocalFile ls (LocalFile ((show (hash infile)) <> "_mapout")) f
 
 
+        getTempMapFiles = mapM (flip withTmpMapFile return) expandedInput
+
         -- concat all processed map output, sort and run through the reducer
-        reduceFiles infiles = do
-            fs <- mapM (flip withTmpMapFile return) infiles
+        reduceFiles = do
+            fs <- getTempMapFiles
             echoInfo ("Running command: " <> (command fs))
             clearExit $ scriptIO $ system (command fs)
           where
@@ -165,12 +167,18 @@ localMapReduce ls mrKey token H.HadoopRunOpts{..} = do
                 maybeCompress <>
                 " > " <> outFile
 
+        removeTempFiles = scriptIO $ do
+            fs <- getTempMapFiles
+            mapM_ removeFile fs
+
 
     liftIO $ infoM "Hadron.Run.Local" "Mapping over all local files"
     mapM_ mapFile expandedInput
 
     liftIO $ infoM "Hadron.Run.Local" "Executing reduce stage."
-    reduceFiles expandedInput
+    reduceFiles
+
+    removeTempFiles
 
 
 -------------------------------------------------------------------------------
