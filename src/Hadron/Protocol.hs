@@ -10,6 +10,7 @@ module Hadron.Protocol
     , protoEnc, protoDec
     , protoEncIS
     , prismToProtocol
+    , filterP
 
     , base64SerProtocol
     , base64SafeCopyProtocol
@@ -96,6 +97,15 @@ protoEncIS p is = do
     os'' <- (p ^. protoEnc) os'
     async $ S.connect is os''
     return is'
+
+
+-------------------------------------------------------------------------------
+-- | Filter elements in both directions of the protocol.
+filterP :: (a -> Bool) -> Protocol b a -> Protocol b a
+filterP f (Protocol enc dec) = Protocol enc' dec'
+    where
+      enc' os = enc os >>= S.filterOutput f
+      dec' is  = dec is >>= S.filter f
 
 
 -------------------------------------------------------------------------------
