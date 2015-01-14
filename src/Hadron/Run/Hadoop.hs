@@ -229,20 +229,20 @@ hadoopMapReduce HadoopEnv{..} mrKey runToken HadoopRunOpts{..} = do
           , "\"" ++ prog ++ " " ++ runToken ++ " " ++ stage ++ "_" ++ mrKey ++ "\""
           ]
 
-      jobName = maybe [] (\nm -> ["-D", "mapred.job.name=\"" <> nm <>"\""])
+      jobName = maybe [] (\nm -> ["-D", "mapreduce.job.name=\"" <> nm <>"\""])
                 _mrsJobName
 
 
       inputs = concatMap mkInput _mrsInput
       mkInput i = ["-input", i]
 
-      numMap = maybe [] (\x -> ["-D", "mapred.map.tasks=" ++ show x]) _mrsNumMap
-      numRed = maybe [] (\x -> ["-D", "mapred.reduce.tasks=" ++ show x]) _mrsNumReduce
+      numMap = maybe [] (\x -> ["-D", "mapreduce.job.maps=" ++ show x]) _mrsNumMap
+      numRed = maybe [] (\x -> ["-D", "mapreduce.job.reduces=" ++ show x]) _mrsNumReduce
 
       comp =
         case _mrsCompress of
-          Just codec -> [ "-D", "mapred.output.compress=true"
-                        , "-D", "mapred.output.compression.codec=" ++ codec
+          Just codec -> [ "-D", "mapreduce.output.fileoutputformat.compress=true"
+                        , "-D", "mapreduce.output.fileoutputformat.compress.codec=" ++ codec
                         -- , "-D", "mapred.compress.map.output=true"
                         -- , "-D", "mapred.map.output.compression.codec=" ++ mrsCodec
                         ]
@@ -252,7 +252,7 @@ hadoopMapReduce HadoopEnv{..} mrKey runToken HadoopRunOpts{..} = do
                NoPartition -> []
                Partition{..} ->
                  [ "-D", "stream.num.map.output.key.fields=" ++ show keySegs
-                 , "-D", "mapred.text.key.partitioner.options=-k1," ++ show partSegs
+                 , "-D", "mapreduce.partition.keypartitioner.options=-k1," ++ show partSegs
                  , "-partitioner", "org.apache.hadoop.mapred.lib.KeyFieldBasedPartitioner"
                  ]
 

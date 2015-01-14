@@ -129,7 +129,7 @@ emitOutput bs = liftIO $ B.hPutStr stdout bs
 -- 'Mapper's and you would like to know what file you're currently
 -- dealing with.
 getFileName :: MonadIO m => m FilePath
-getFileName = liftIO $ getEnv "map_input_file"
+getFileName = liftIO $ getEnv "mapreduce_map_input_file"
 
 
 
