@@ -168,14 +168,8 @@ newtype WrapSerialize a = WrapSerialize { _getSerialized :: a }
     deriving (Eq,Show,Read,Ord,Serialize)
 
 newtype WrapSafeCopy a = WrapSafeCopy { _getSafeCopy :: a }
-    deriving (Eq,Show,Read,Ord,SafeCopy)
-
-
--- mrKeyError :: Int -> Int -> a
--- mrKeyError i n =
---     error $ "Expected MapReduce key to have "
---          <> show i <> " parts. Instead received "
---          <> show n <> " parts."
+    deriving (Eq,Show,Read,Ord)
+deriveSafeCopy 1 'base ''WrapSafeCopy
 
 
 type Parser = Parsec [B.ByteString] ()

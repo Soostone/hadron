@@ -38,7 +38,6 @@ import           System.FilePath.Lens
 import           System.FilePath.Posix
 import           System.IO
 import qualified System.IO.Streams     as S
-import           System.Posix.Env
 import           System.Process
 -------------------------------------------------------------------------------
 import           Hadron.Logger
@@ -137,7 +136,7 @@ localMapReduce ls mrKey token H.HadoopRunOpts{..} = do
         -- map over each file individually and write results into a temp file
         mapFile infile = clearExit . scriptIO . withTmpMapFile infile $ \ fp -> do
             echoInfo ("Running command: " <> (command fp))
-            setEnv "mapreduce_map_input_file" infile True
+            setEnv "mapreduce_map_input_file" infile
             system (command fp)
           where
             command fp =
