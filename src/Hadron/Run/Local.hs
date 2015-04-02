@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP                       #-}
 {-# LANGUAGE FlexibleContexts          #-}
 {-# LANGUAGE MultiParamTypeClasses     #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
@@ -44,6 +45,11 @@ import           Hadron.Logger
 import qualified Hadron.Run.Hadoop     as H
 import           Hadron.Utils
 -------------------------------------------------------------------------------
+#if MIN_VERSION_base(4, 7, 0)
+#else
+import           System.Posix.Env
+#endif
+
 
 
 newtype LocalFile = LocalFile { _unLocalFile :: FilePath }
@@ -136,7 +142,11 @@ localMapReduce ls mrKey token H.HadoopRunOpts{..} = do
         -- map over each file individually and write results into a temp file
         mapFile infile = clearExit . scriptIO . withTmpMapFile infile $ \ fp -> do
             echoInfo ("Running command: " <> (command fp))
+#if MIN_VERSION_base(4, 7, 0)
             setEnv "mapreduce_map_input_file" infile
+#else
+            setEnv "mapreduce_map_input_file" infile True
+#endif
             system (command fp)
           where
             command fp =
