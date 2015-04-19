@@ -8,7 +8,6 @@ module Hadron.Protocol
       Protocol (..)
     , Protocol'
     , protoEnc, protoDec
-    , protoEncIS
     , prismToProtocol
     , filterP
 
@@ -31,6 +30,7 @@ module Hadron.Protocol
 
     -- * Utils
     , lineC
+    , linesConduit
     , mkKey
 
     , eitherPrism
@@ -41,24 +41,28 @@ module Hadron.Protocol
 
 -------------------------------------------------------------------------------
 import           Blaze.ByteString.Builder
+import           Control.Applicative
 import           Control.Category
-import           Control.Concurrent.Async
+
 import           Control.Error
 import           Control.Lens
 import           Control.Monad
-import qualified Data.ByteString.Base64   as Base64
-import qualified Data.ByteString.Char8    as B
+import           Control.Monad.Trans.Resource
+import           Data.Attoparsec.ByteString.Char8 (Parser, endOfLine, takeTill)
+import qualified Data.ByteString.Base64           as Base64
+import qualified Data.ByteString.Char8            as B
+import           Data.Conduit
+import           Data.Conduit.Attoparsec
+import           Data.Conduit.Blaze
+import qualified Data.Conduit.List                as C
+import           Data.Conduit.Zlib                (gzip, ungzip)
 import           Data.CSV.Conduit
 import           Data.Monoid
-import qualified Data.SafeCopy            as SC
-import qualified Data.Serialize           as Ser
+import qualified Data.SafeCopy                    as SC
+import qualified Data.Serialize                   as Ser
 import           Data.String
-import           Prelude                  hiding (id, (.))
-import           System.IO.Streams        (InputStream, OutputStream)
-import qualified System.IO.Streams        as S
+import           Prelude                          hiding (id, (.))
 -------------------------------------------------------------------------------
-import           Hadron.Streams
-import qualified Hadron.Streams.Bounded   as S
 import           Hadron.Types
 -------------------------------------------------------------------------------
 
@@ -78,25 +82,26 @@ type Protocol' a = Protocol B.ByteString a
 --
 -- Most of the time we'll be using 'Protocol\''s.
 data Protocol b a = Protocol {
-      _protoEnc :: OutputStream b -> IO (OutputStream a)
-    , _protoDec :: InputStream b  -> IO (InputStream a)
+      _protoEnc :: Conduit a (ResourceT IO ) b
+    , _protoDec :: Conduit b (ResourceT IO) a
     }
 makeLenses ''Protocol
 
+
 instance Category Protocol where
-    id = Protocol return return
-    p1 . p2 = Protocol { _protoEnc = \ o -> _protoEnc p2 o >>= _protoEnc p1
-                       , _protoDec = \ i -> _protoDec p2 i >>= _protoDec p1 }
+    id = Protocol (C.map id) (C.map id)
+    p1 . p2 = Protocol { _protoEnc = _protoEnc p1 =$= _protoEnc p2
+                       , _protoDec = _protoDec p2 =$= _protoDec p1}
 
 
--------------------------------------------------------------------------------
--- | Get an InputStream based encode action out of the protocol.
-protoEncIS :: Protocol b a -> InputStream a -> IO (InputStream b)
-protoEncIS p is = do
-    (is', os') <- S.makeChanPipe 64
-    os'' <- (p ^. protoEnc) os'
-    async $ S.connect is os''
-    return is'
+-- -------------------------------------------------------------------------------
+-- -- | Get an InputStream based encode action out of the protocol.
+-- protoEncIS :: Protocol b a -> InputStream a -> IO (InputStream b)
+-- protoEncIS p is = do
+--     (is', os') <- S.makeChanPipe 64
+--     os'' <- (p ^. protoEnc) os'
+--     async $ S.connect is os''
+--     return is'
 
 
 -------------------------------------------------------------------------------
@@ -104,8 +109,9 @@ protoEncIS p is = do
 filterP :: (a -> Bool) -> Protocol b a -> Protocol b a
 filterP f (Protocol enc dec) = Protocol enc' dec'
     where
-      enc' os = enc os >>= S.filterOutput f
-      dec' is  = dec is >>= S.filter f
+      enc' = C.filter f =$= enc
+      dec'  = dec =$= C.filter f
+
 
 
 -------------------------------------------------------------------------------
@@ -116,10 +122,11 @@ filterP f (Protocol enc dec) = Protocol enc' dec'
 -- work properly.
 prismToProtocol :: Prism' B.ByteString a -> Protocol' a
 prismToProtocol p =
-    Protocol { _protoEnc = \ i -> S.contramap (write . review p) i
-             , _protoDec = \ i -> S.map (mkErr . preview p) =<< streamLines i }
+    Protocol { _protoEnc = C.map (review p) =$= write
+             , _protoDec = linesConduit =$= C.map (mkErr . preview p) }
   where
-    write x = toByteString $ fromByteString x `mappend` nl
+    write = C.map (\x -> fromByteString x `mappend` nl) =$=
+            builderToByteString
     nl = fromByteString "\n"
     mkErr = fromMaybe $
             error "Unexpected: Prism could not decode incoming value."
@@ -134,8 +141,8 @@ idProtocol = id
 
 -- | A simple serialization strategy that works on lines of strings.
 linesProtocol :: Protocol' B.ByteString
-linesProtocol = Protocol { _protoEnc = S.contramap (\x -> B.concat [x, "\n"])
-                         , _protoDec = streamLines }
+linesProtocol = Protocol { _protoEnc = C.map (\x -> B.concat [x, "\n"])
+                         , _protoDec = linesConduit }
 
 
 -------------------------------------------------------------------------------
@@ -155,15 +162,14 @@ base64SafeCopyProtocol = prismToProtocol pSafeCopy
 -------------------------------------------------------------------------------
 -- | Encode and decode a gzip stream
 gzipProtocol :: Protocol B.ByteString B.ByteString
-gzipProtocol = Protocol (S.gzip S.defaultCompressionLevel) S.gunzip
+gzipProtocol = Protocol gzip ungzip
 
 
 -------------------------------------------------------------------------------
--- | Protocol for converting to/from any stream type 'b' and CSV type 'a'.
-csvProtocol :: (IsString b, Monoid b, CSV b a) => CSVSettings -> Protocol b a
-csvProtocol cset = Protocol
-  (S.contramap (\r -> rowToStr cset r <> "\n"))
-  (\ i -> conduitStream id (intoCSV cset) i)
+-- | Protocol for converting to/from any stream type 'b' and CSV type
+-- 'a'.
+csvProtocol :: (CSV b a) => CSVSettings -> Protocol b a
+csvProtocol cset = Protocol (fromCSV cset) (intoCSV cset)
 
 
 -------------------------------------------------------------------------------
@@ -222,14 +228,33 @@ pShow = prism
           (\x -> maybe (Left x) Right . readMay . B.unpack $ x)
 
 
+-- | Parse a line of input and eat a tab character that may be at the
+-- very end of the line. This tab is put by hadoop if this file is the
+-- result of a previous M/R that didn't have any value in the reduce
+-- step.
+parseLine :: Parser B.ByteString
+parseLine = ln <* endOfLine
+    where
+      ln = do
+        x <- takeTill (== '\n')
+        return $ if B.length x > 0 && B.last x == '\t'
+          then B.init x
+          else x
+
+
+-- | Turn incoming stream into a stream of lines. This will
+-- automatically eat tab characters at the end of the line.
+linesConduit :: MonadThrow m => Conduit B.ByteString m B.ByteString
+linesConduit = conduitParser parseLine =$= C.map snd
+
+
 -- | Parse lines of (key,value) for hadoop reduce stage
-lineC
-    :: Int
-    -- ^ Number of key segments (usually just 1), but may be higher
-    -- if you're using multiple parts in your key.
-    -> InputStream B.ByteString
-    -> IO (InputStream (CompositeKey, B.ByteString))
-lineC n i = streamLines i >>= S.map ppair
+lineC :: MonadThrow m
+      => Int
+      -- ^ Number of key segments (usually just 1), but may be higher
+      -- if you're using multiple parts in your key.
+      -> Conduit B.ByteString m (CompositeKey, B.ByteString)
+lineC n = linesConduit =$= C.map ppair
     where
       ppair line = (k, v)
           where
@@ -238,7 +263,6 @@ lineC n i = streamLines i >>= S.map ppair
             -- ^ Re-assemble remaining segments to restore
             -- correctness.
             spl = B.split '\t' line
-
 
 
 

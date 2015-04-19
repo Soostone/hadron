@@ -60,6 +60,8 @@ import           Control.Monad
 import           Control.Monad.Trans
 import           Data.ByteString.Char8       (ByteString)
 import qualified Data.ByteString.Char8       as B
+import           Data.Conduit
+import           Data.Conduit.Binary         (sourceHandle)
 import           Data.Default
 import           Data.List
 import           Data.List.LCS.HuntSzymanski
@@ -69,7 +71,6 @@ import qualified Data.Text                   as T
 import           System.Environment
 import           System.Exit
 import           System.IO
-import qualified System.IO.Streams           as S
 import           System.Process
 -------------------------------------------------------------------------------
 import           Hadron.Logger
@@ -362,7 +363,7 @@ hdfsChmod HadoopEnv{..} fp mode = rawSystem _hsBin ["fs", "-chmod", "-R", mode, 
 --
 -- NOTE: It appears that this function may output a header before the file
 -- contents.  Be careful!
-hdfsCat :: MonadIO m => HadoopEnv -> FilePath -> m (S.InputStream ByteString)
+hdfsCat :: MonadIO m => HadoopEnv -> FilePath -> Producer m ByteString
 hdfsCat HadoopEnv{..} p = do
     (inH, outH, _, _) <- liftIO $ do
       let cp = (proc _hsBin ["fs", "-cat", p]) { std_in = CreatePipe
@@ -370,7 +371,7 @@ hdfsCat HadoopEnv{..} p = do
                                               , std_err = Inherit }
       createProcess cp
     maybe (return ()) (liftIO . hClose) inH
-    maybe exit (liftIO . S.handleToInputStream) outH
+    maybe exit sourceHandle outH
   where
     exit = error $ concat ["Could not open file ", p, ".  Skipping...."]
 

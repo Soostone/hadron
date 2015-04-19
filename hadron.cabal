@@ -19,6 +19,7 @@ library
 
   exposed-modules:     
     Hadron.Basic
+    Hadron.Conduit
     Hadron.Controller
     Hadron.Join
     Hadron.Logger

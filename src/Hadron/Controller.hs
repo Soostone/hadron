@@ -125,9 +125,14 @@ import           Control.Monad.Catch
 import           Control.Monad.Operational    hiding (view)
 import qualified Control.Monad.Operational    as O
 import           Control.Monad.State
+import           Control.Monad.Trans.Resource
 import           Control.Retry
 import qualified Data.ByteString.Char8        as B
 import           Data.ByteString.Search       as B
+import           Data.Conduit                 hiding (connect)
+import           Data.Conduit.Binary          (sinkHandle, sourceHandle)
+import qualified Data.Conduit.List            as C
+import           Data.Conduit.Zlib
 import           Data.Default
 import           Data.List
 import qualified Data.Map.Strict              as M
@@ -135,6 +140,7 @@ import           Data.Monoid
 import           Data.RNG
 import           Data.SafeCopy
 import           Data.Serialize
+import           Data.String
 import qualified Data.Text                    as T
 import           Data.Text.Encoding
 import           Data.Time
@@ -142,20 +148,17 @@ import           Data.Typeable
 import           System.Environment
 import           System.FilePath.Lens
 import           System.IO
-import           System.IO.Streams            (InputStream, OutputStream)
-import qualified System.IO.Streams            as S
-import qualified System.IO.Streams.Concurrent as S
 import           System.Locale
 import           Text.Parsec
 -------------------------------------------------------------------------------
 import           Hadron.Basic                 hiding (mapReduce)
+import           Hadron.Conduit
 import           Hadron.Join
 import           Hadron.Logger
 import           Hadron.Protocol
 import           Hadron.Run
 import           Hadron.Run.Hadoop            (mrsInput, mrsJobName,
                                                mrsNumReduce, mrsOutput)
-import           Hadron.Streams
 import           Hadron.Types
 import           Hadron.Utils
 -------------------------------------------------------------------------------
@@ -328,23 +331,21 @@ instance (MRKey a, MRKey b, MRKey c, MRKey d) => MRKey (a,b,c,d) where
 
 
 
-
 -------------------------------------------------------------------------------
--- | Map MR output.
-(>.>) :: MapReduce a b -> (OutputStream c -> IO (OutputStream b)) -> MapReduce a c
+-- | Do something with m-r output before writing it to a tap.
+(>.>) :: MapReduce a b -> Conduit b (ResourceT IO) c -> MapReduce a c
 (MapReduce o p m c r) >.> f = MapReduce o p m c r'
     where
       r' = case r of
-        Left r'' -> Left $ \ is os -> f os >>= r'' is
-        Right conv -> Right $ f >=> conv
+        Left r'' -> Left $ r'' =$= f
+        Right conv -> Right $ conv =$= f
 
 
 -------------------------------------------------------------------------------
--- | Contramap MR input; i.e. do something before MR.
-(<.<) :: (InputStream a -> IO (InputStream b)) -> MapReduce b c -> MapReduce a c
-f <.< (MapReduce o p m c r) = MapReduce o p m' c r
-    where
-      m' i o = f i >>= \ i' -> m i' o
+-- | Do something with the m-r input before starting the map stage.
+(<.<) :: Conduit c (ResourceT IO) a -> MapReduce a b -> MapReduce c b
+f <.< (MapReduce o p m c r) = MapReduce o p (f =$= m) c r
+
 
 -------------------------------------------------------------------------------
 -- | A packaged MapReduce step. Make one of these for each distinct
@@ -358,7 +359,7 @@ data MapReduce a b = forall k v. MRKey k => MapReduce {
     -- steps.
     , _mrMapper   :: Mapper a k v
     , _mrCombiner :: Maybe (Reducer k v (k,v))
-    , _mrReducer  :: Either (Reducer k v b) (OutputStream b -> IO (OutputStream v))
+    , _mrReducer  :: Either (Reducer k v b) (Conduit v (ResourceT IO) b)
     -- ^ Either a reducer or a final value converter for a map-only
     -- MapReduce job.
     }
@@ -415,11 +416,11 @@ concatTaps ts = Tap locs newP
       locs = concatMap _location ts
       newP = Protocol enc dec
 
-      dec is = do
-          fn <- getFileName
+      dec = do
+          fn <- liftIO $ getFileName
           case find (flip belongsToTap fn) ts of
             Nothing -> error "Unexpected: Can't determine tap in concatTaps."
-            Just t -> (t ^. (proto . protoDec)) is
+            Just t -> t ^. (proto . protoDec)
 
       enc = head ts ^. proto . protoEnc
 
@@ -430,11 +431,14 @@ concatTaps ts = Tap locs newP
 -- you'll fill up your memory.
 readTap :: RunContext -> Tap a -> IO [a]
 readTap rc t = do
-    fs <- liftIO $ concat <$> forM (_location t) (hdfsLs rc)
+    fs <- concat <$> forM (_location t) (hdfsLs rc)
     let chk fp = not (elem (fp ^. filePath . filename) [".", ".."]) &&
                  (fp ^. fileSize) > 0
     let fs' = filter chk fs
-    S.toList =<< liftIO . (t ^. proto . protoDec) =<< inp (map _filePath fs')
+    runResourceT $
+      inp (map _filePath fs')
+        =$= (t ^. proto . protoDec)
+        $$ C.consume
     where
 
       policy = capDelay 10000000 $
@@ -443,19 +447,18 @@ readTap rc t = do
       pullOne sem chan fp =
         bracket_ (waitQSem sem) (signalQSem sem) $
         recoverAll policy $ do
-          a <- hdfsCat rc fp
-          writeChan chan (Just a)
+          a <- runResourceT $ hdfsCat rc fp $$ C.consume
+          writeChan chan (Just (B.concat a))
 
-      inp :: [FilePath] -> IO (InputStream B.ByteString)
+      inp :: [FilePath] -> Producer (ResourceT IO) B.ByteString
       inp fs = do
-        sem <- newQSem 10
-        chan <- newChan
-        a <- async $ do
+        sem <- liftIO $ newQSem 10
+        chan <- liftIO newChan
+        a <- liftIO $ async $ do
           mapConcurrently (pullOne sem chan) fs
           writeChan chan Nothing
-        link a
-        iss <- S.chanToInput chan
-        bindStream iss return
+        liftIO $ link a
+        sourceChan chan
 
 
 
@@ -470,37 +473,31 @@ mergeTaps ta tb = Tap (_location ta ++ _location tb) newP
     where
       newP = Protocol enc dec
 
-      dec is = do
-          fn <- getFileName
+      dec = do
+          fn <- liftIO getFileName
           if belongsToTap ta fn
-            then (ta ^. proto . protoDec) is >>= S.map Left
-            else (tb ^. proto . protoDec) is >>= S.map Right
+            then (ta ^. proto . protoDec) =$= C.map Left
+            else (tb ^. proto . protoDec) =$= C.map Right
 
-      enc os = do
-          as <- (ta ^. (proto . protoEnc)) os
-          bs <- (tb ^. (proto . protoEnc)) os
+      as = ta ^. (proto . protoEnc)
+      bs = tb ^. (proto . protoEnc)
 
-          S.makeOutputStream $ \ i ->
-            case i of
-              Nothing -> S.write Nothing os
-              Just (Left a) -> S.write (Just a) as
-              Just (Right a) -> S.write (Just a) bs
+      enc = awaitForever $ \ res ->
+        case res of
+          Left a -> yield a =$= as
+          Right b -> yield b =$= bs
 
 
 ------------------------------------------------------------------------------
--- | Conduit that takes in hdfs filenames and outputs the file contents.
-readHdfsFile
-    :: RunContext
-    -> S.InputStream B.ByteString
-    -> IO (S.InputStream B.ByteString)
-readHdfsFile settings is = bindStream is go
-    where
-      go s3Uri = do
-        let uriStr = B.unpack s3Uri
-            getFile = hdfsLocalStream settings uriStr
-        if isSuffixOf "gz" uriStr
-          then getFile >>= S.gunzip
-          else getFile
+-- | Conduit that takes in hdfs filenames and outputs the file
+-- contents.
+readHdfsFile :: RunContext -> Conduit B.ByteString (ResourceT IO) B.ByteString
+readHdfsFile settings = awaitForever $ \s3Uri -> do
+    let uriStr = B.unpack s3Uri
+        getFile = hdfsLocalStream settings uriStr
+    if isSuffixOf "gz" uriStr
+      then getFile =$= ungzip
+      else getFile
 
 
 ------------------------------------------------------------------------------
@@ -516,7 +513,7 @@ fileListTap :: RunContext
 fileListTap settings loc = tap loc (Protocol enc dec)
   where
     enc = error "You should never use a fileListTap as output!"
-    dec is = streamLines is >>= readHdfsFile settings
+    dec = linesConduit =$= readHdfsFile settings
 
 
 
@@ -771,13 +768,13 @@ orchestrate (Controller p) settings rr s = do
           return a
 
 
-      eval' (MakeTap proto) = do
+      eval' (MakeTap tp) = do
           loc <- liftIO $ randomRemoteFile settings
 
           curId <- pickTapId
           tapLens curId .= Just (B.pack loc)
 
-          return $ Tap [loc] proto
+          return $ Tap [loc] tp
 
       eval' (BinaryDirTap loc filt) = do
           (_, hdfsFile) <- liftIO $ setupBinaryDir settings loc filt
@@ -926,6 +923,7 @@ hadoopMain cont settings rr = do
 
 
 -------------------------------------------------------------------------------
+mkArgs :: IsString [a] => [a] -> [(Phase, [a])]
 mkArgs mrKey = [ (Map, "mapper_" ++ mrKey)
                , (Reduce, "reducer_" ++ mrKey)
                , (Combine, "combiner_" ++ mrKey) ]
@@ -933,6 +931,11 @@ mkArgs mrKey = [ (Map, "mapper_" ++ mrKey)
 
 -------------------------------------------------------------------------------
 -- | load controller varibles back up
+loadState
+    :: (MonadState ContState m, MonadIO m)
+    => RunContext
+    -> FilePath
+    -> m ()
 loadState settings runToken = do
     fn <- hdfsTempFilePath settings runToken
     tmp <- liftIO $ hdfsGet settings fn
@@ -979,14 +982,14 @@ workNode settings (Controller p) runToken arg = do
 
       go (NodeIO f) = liftIO f
 
-      go (MakeTap proto) = do
+      go (MakeTap lp) = do
           curId <- pickTapId
           dynLoc <- use $ tapLens curId
           case dynLoc of
             Nothing -> error $
               "Dynamic location can't be determined for MakTap at index " <>
               show curId
-            Just loc' -> return $ Tap ([B.unpack loc']) proto
+            Just loc' -> return $ Tap ([B.unpack loc']) lp
 
       go (BinaryDirTap loc _) = do
 
@@ -1027,31 +1030,26 @@ workNode settings (Controller p) runToken arg = do
                 Left _ -> mapRegular
                 Right conv -> do
                   setLineBuffering
-                  dec' <- dec
-                  is' <- dec' S.stdin
-                  os' <- S.contramap snd =<< conv =<< enc S.stdout
-                  mp is' os'
+                  dec' <- liftIO $ dec
+                  runResourceT $ sourceHandle stdin
+                    =$= dec'
+                    =$= mp
+                    =$= C.map snd
+                    =$= conv
+                    =$= enc
+                    $$ sinkHandle stdout
 
-              mapRegular = mapperWith mrInPrism $ \ is os -> do
-                dec' <- dec
-                is' <- dec' is
-                os' <- S.contramap encodeKey os
-                mp is' os'
+              mapRegular = do
+                dec' <- liftIO dec
+                mapperWith mrInPrism (dec' =$= mp =$= C.map encodeKey)
 
               red = case rd of
                 Right _ -> error "Unexpected: Reducer called for a map-only job."
-                Left f -> reducer mro mrInPrism $ \ is os -> do
-                  is' <- S.map decodeKey is
-                  os' <- enc os
-                  f is' os'
+                Left f -> reducer mro mrInPrism (C.map decodeKey =$= f =$= enc)
 
               comb' = case comb of
                   Nothing -> error "Unexpected: No combiner supplied."
-                  Just c -> combiner mro mrInPrism $ \ is os -> do
-                    is' <- S.map decodeKey is
-                    os' <- S.contramap encodeKey os
-                    c is' os'
-
+                  Just c -> combiner mro mrInPrism (C.map decodeKey =$= c =$= C.map encodeKey)
 
               -- error message maker for caught exceptions
               mkErr :: Maybe FilePath -> String -> SomeException -> b
@@ -1155,9 +1153,7 @@ joinStep fs = MapReduce mro pSerialize mp Nothing (Left rd)
       mkMap' ds = fromMaybe (error "Can't identify current tap in IX.") $ do
           t <- M.lookup ds tapIx
           cond <- find ((== t) . view _1) fs
-          return $ \ is os -> do
-            os' <- S.contramap (_1 %~ toCompKey) os
-            (view _3 cond) is os'
+          return $ (cond ^. _3) =$= C.map (_1 %~ toCompKey)
 
       mp = joinMapper getDS mkMap'
 
@@ -1286,26 +1282,21 @@ joinMR mp = MapReduce mro pSerialize mp' Nothing (Left red)
       -- Rights.
 
       mp' :: Mapper (Either a b) CompositeKey (Either v v)
-      mp' is os = do
-        os' <- S.contramap modMap os
-        mp is os'
+      mp' = mp =$= C.map modMap
 
       modMap (k, Left v) = (toCompKey k ++ ["1"], Left v)
       modMap (k, Right v) = (toCompKey k ++ ["2"], Right v)
 
       -- cache lefts, start emitting upon seeing the first right.
-      red is os = go []
+      red = go []
         where
-          go acc = do
-            inc <- S.read is
+          go ls = do
+            inc <- await
             case inc of
               Nothing -> return ()
-
-              Just (_, Left r) -> go $! (r:acc)
-
+              Just (_, Left r) -> go $! (r:ls)
               Just (_, Right b) -> do
-                let xs = [mappend a b | a <- acc]
-                forM_ xs $ \ x -> S.write (Just x) os
-                go acc
+                mapM_ yield [mappend a b | a <- ls]
+                go ls
 
 

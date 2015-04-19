@@ -66,23 +66,21 @@ module Hadron.Run
 
 -------------------------------------------------------------------------------
 import           Control.Error
-import           Control.Exception.Lens
 import           Control.Lens
 import           Control.Monad
-
+import           Control.Monad.Morph
 import           Control.Monad.Trans
-
-import qualified Data.ByteString.Char8  as B
-import           Data.Monoid
+import           Control.Monad.Trans.Resource
+import qualified Data.ByteString.Char8        as B
+import           Data.Conduit
+import           Data.Conduit.Binary          (sourceFile)
 import           System.Directory
 import           System.FilePath.Posix
-import           System.IO
-import qualified System.IO.Streams      as S
 -------------------------------------------------------------------------------
 import           Hadron.Run.FanOut
-import qualified Hadron.Run.Hadoop      as H
-import           Hadron.Run.Local       (LocalFile (..))
-import qualified Hadron.Run.Local       as L
+import qualified Hadron.Run.Hadoop            as H
+import           Hadron.Run.Local             (LocalFile (..))
+import qualified Hadron.Run.Local             as L
 import           Hadron.Utils
 -------------------------------------------------------------------------------
 
@@ -100,6 +98,7 @@ data RunContext
 makePrisms ''RunContext
 
 
+lset :: RunContext -> L.LocalRunSettings
 lset (LocalRun s) = s
 lset (HadoopRun _ s) = s
 
@@ -126,58 +125,58 @@ hdfsFileExists (HadoopRun env _) fp = H.hdfsFileExists env fp
 
 -------------------------------------------------------------------------------
 hdfsDeletePath :: RunContext -> FilePath -> IO ()
-hdfsDeletePath env fp = case env of
-    LocalRun env -> L.runLocal env (L.hdfsDeletePath (LocalFile fp))
-    HadoopRun env _ -> H.hdfsDeletePath env fp
+hdfsDeletePath rc fp = case rc of
+    LocalRun lrs -> L.runLocal lrs (L.hdfsDeletePath (LocalFile fp))
+    HadoopRun he _ -> H.hdfsDeletePath he fp
 
 
 -------------------------------------------------------------------------------
 hdfsLs :: RunContext -> FilePath -> IO [File]
-hdfsLs env fp = case env of
-    LocalRun env -> L.runLocal env (L.hdfsLs (LocalFile fp))
-    HadoopRun env _ -> H.hdfsLs env fp
+hdfsLs rc fp = case rc of
+    LocalRun lrs -> L.runLocal lrs (L.hdfsLs (LocalFile fp))
+    HadoopRun he _ -> H.hdfsLs he fp
 
 
 -------------------------------------------------------------------------------
 hdfsPut :: RunContext -> L.LocalFile -> FilePath -> IO ()
-hdfsPut env f1 f2 = case env of
-    LocalRun env -> L.runLocal env (L.hdfsPut f1 (LocalFile f2))
-    HadoopRun e ls -> withLocalFile env f1 $ \ lf -> H.hdfsPut e lf f2
+hdfsPut rc f1 f2 = case rc of
+    LocalRun lrs -> L.runLocal lrs (L.hdfsPut f1 (LocalFile f2))
+    HadoopRun e _ -> withLocalFile rc f1 $ \ lf -> H.hdfsPut e lf f2
 
 
 -------------------------------------------------------------------------------
 hdfsFanOut :: RunContext -> IO FanOut
-hdfsFanOut env = case env of
-    LocalRun env -> L.hdfsFanOut
+hdfsFanOut rc = case rc of
+    LocalRun _ -> L.hdfsFanOut
     HadoopRun e _ -> H.hdfsFanOut e
 
 
 -------------------------------------------------------------------------------
 hdfsMkdir :: RunContext -> FilePath -> IO ()
-hdfsMkdir env fp = case env of
-    LocalRun env -> L.runLocal env (L.hdfsMkdir (LocalFile fp))
-    HadoopRun env _ -> H.hdfsMkdir env fp
+hdfsMkdir rc fp = case rc of
+    LocalRun lcs -> L.runLocal lcs (L.hdfsMkdir (LocalFile fp))
+    HadoopRun he _ -> H.hdfsMkdir he fp
 
 
 -------------------------------------------------------------------------------
 hdfsCat
     :: RunContext
     -> FilePath
-    -> IO (S.InputStream B.ByteString)
-hdfsCat env fp = case env of
-    LocalRun env -> L.runLocal env (L.hdfsCat (LocalFile fp))
-    HadoopRun{} -> hdfsLocalStream env fp
+    -> Producer (ResourceT IO) B.ByteString
+hdfsCat rc fp = case rc of
+    LocalRun lcs -> hoist (hoist (L.runLocal lcs)) $ L.hdfsCat (LocalFile fp)
+    HadoopRun{} -> hdfsLocalStream rc fp
 
 
 -------------------------------------------------------------------------------
 -- | Copy a file from HDFS into local.
 hdfsGet :: RunContext -> FilePath -> IO LocalFile
-hdfsGet env fp = do
+hdfsGet rc fp = do
     local <- L.randomFileName
-    case env of
-      LocalRun env -> return (LocalFile fp)
+    case rc of
+      LocalRun _ -> return (LocalFile fp)
       HadoopRun h _ -> do
-        withLocalFile env local $ \ lf -> H.hdfsGet h fp lf
+        withLocalFile rc local $ \ lf -> H.hdfsGet h fp lf
         return local
 
 
@@ -186,17 +185,14 @@ hdfsGet env fp = do
 hdfsLocalStream
     :: RunContext
     -> FilePath
-    -> IO (S.InputStream B.ByteString )
+    -> Producer (ResourceT IO) B.ByteString
 hdfsLocalStream env fp = case env of
     LocalRun{} -> hdfsCat env fp
-    HadoopRun e ls -> do
-      random <- hdfsGet env fp
+    HadoopRun _ _ -> do
+      random <- liftIO $ hdfsGet env fp
       withLocalFile env random $ \ local -> do
-        h <- catching _IOException
-               (openFile local ReadMode)
-               (\e ->  error $ "hdfsLocalStream failed with open file: " <> show e)
-        let cleanup = hClose h >> removeFile local
-        S.handleToInputStream h >>= S.atEndOfInput cleanup
+        register $ removeFile local
+        sourceFile local
 
 
 

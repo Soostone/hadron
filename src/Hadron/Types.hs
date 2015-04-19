@@ -7,9 +7,10 @@ module Hadron.Types where
 
 -------------------------------------------------------------------------------
 import           Control.Lens
-import qualified Data.ByteString.Char8 as B
+import           Control.Monad.Trans.Resource
+import qualified Data.ByteString.Char8        as B
+import           Data.Conduit
 import           Data.Default
-import           System.IO.Streams
 -------------------------------------------------------------------------------
 import           Hadron.Run.Hadoop
 -------------------------------------------------------------------------------
@@ -32,7 +33,7 @@ mkKey = B.intercalate "|"
 -- A mapper is responsible for signaling its own "Nothing" to signify
 -- it is done writing. Hadron will not automatically mark EOF on the
 -- OutputStream, which is basically 'stdout'.
-type Mapper a k b = InputStream a -> OutputStream (k, b) -> IO ()
+type Mapper a k b = Conduit a (ResourceT IO) (k, b)
 
 
 -------------------------------------------------------------------------------
@@ -49,7 +50,7 @@ type Mapper a k b = InputStream a -> OutputStream (k, b) -> IO ()
 -- It does not matter if you supply your own EOF signals via Nothing
 -- as Hadron will simply discard them before relaying over to 'stdout'
 -- and supply its own EOF based on when its input is finished.
-type Reducer k a r  = InputStream (k, a) -> OutputStream r -> IO ()
+type Reducer k a r  = Conduit (k, a) (ResourceT IO) r
 
 
 data ReduceErrorStrategy

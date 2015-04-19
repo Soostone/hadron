@@ -26,7 +26,10 @@ import           Control.Applicative
 import           Control.Error
 import           Control.Lens
 import           Control.Monad.Reader
-import qualified Data.ByteString.Char8 as B
+import           Control.Monad.Trans.Resource
+import qualified Data.ByteString.Char8        as B
+import           Data.Conduit
+import           Data.Conduit.Binary          (sourceFile)
 import           Data.Default
 import           Data.Hashable
 import           Data.List
@@ -38,12 +41,11 @@ import           System.Exit
 import           System.FilePath.Lens
 import           System.FilePath.Posix
 import           System.IO
-import qualified System.IO.Streams     as S
 import           System.Process
 -------------------------------------------------------------------------------
 import           Hadron.Logger
 import           Hadron.Run.FanOut
-import qualified Hadron.Run.Hadoop     as H
+import qualified Hadron.Run.Hadoop            as H
 import           Hadron.Utils
 -------------------------------------------------------------------------------
 #if MIN_VERSION_base(4, 7, 0)
@@ -277,11 +279,8 @@ hdfsMkdir p = liftIO . createDirectoryIfMissing True =<< path p
 
 
 -------------------------------------------------------------------------------
-hdfsCat :: LocalFile -> Local (S.InputStream B.ByteString)
-hdfsCat p = do
-    fp <- (path p)
-    h <- liftIO $ openFile fp ReadMode
-    liftIO $ S.handleToInputStream h >>= S.atEndOfInput (hClose h)
+hdfsCat :: LocalFile -> Producer (ResourceT Local) B.ByteString
+hdfsCat p = sourceFile =<< (lift . lift) (path p)
 
 
 -------------------------------------------------------------------------------
@@ -295,11 +294,11 @@ hdfsGet fp = do
     return target
 
 
-
-hdfsLocalStream :: LocalFile -> Local (S.InputStream B.ByteString)
+hdfsLocalStream :: LocalFile -> Producer (ResourceT Local) B.ByteString
 hdfsLocalStream = hdfsCat
 
 
+-------------------------------------------------------------------------------
 randomFileName :: MonadIO m => m LocalFile
 randomFileName = (LocalFile . B.unpack) `liftM` liftIO (mkRNG >>= randomToken 64)
 
