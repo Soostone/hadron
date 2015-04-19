@@ -58,6 +58,9 @@ module Hadron.Run
     , withLocalFile
     , withRandomLocalFile
 
+    , module Hadron.Run.FanOut
+    , hdfsFanOut
+
     ) where
 
 
@@ -76,6 +79,7 @@ import           System.FilePath.Posix
 import           System.IO
 import qualified System.IO.Streams      as S
 -------------------------------------------------------------------------------
+import           Hadron.Run.FanOut
 import qualified Hadron.Run.Hadoop      as H
 import           Hadron.Run.Local       (LocalFile (..))
 import qualified Hadron.Run.Local       as L
@@ -139,6 +143,13 @@ hdfsPut :: RunContext -> L.LocalFile -> FilePath -> IO ()
 hdfsPut env f1 f2 = case env of
     LocalRun env -> L.runLocal env (L.hdfsPut f1 (LocalFile f2))
     HadoopRun e ls -> withLocalFile env f1 $ \ lf -> H.hdfsPut e lf f2
+
+
+-------------------------------------------------------------------------------
+hdfsFanOut :: RunContext -> IO FanOut
+hdfsFanOut env = case env of
+    LocalRun env -> L.hdfsFanOut
+    HadoopRun e _ -> H.hdfsFanOut e
 
 
 -------------------------------------------------------------------------------

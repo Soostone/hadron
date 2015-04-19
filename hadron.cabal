@@ -24,6 +24,7 @@ library
     Hadron.Logger
     Hadron.Protocol
     Hadron.Run
+    Hadron.Run.FanOut
     Hadron.Run.Hadoop
     Hadron.Run.Local
     Hadron.Streams

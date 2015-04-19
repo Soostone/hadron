@@ -43,6 +43,7 @@ module Hadron.Run.Hadoop
     , hdfsDeletePath
     , hdfsLs, parseLS
     , hdfsPut
+    , hdfsFanOut
     , hdfsMkdir
     , tmpRoot
     , hdfsCat
@@ -72,6 +73,7 @@ import qualified System.IO.Streams           as S
 import           System.Process
 -------------------------------------------------------------------------------
 import           Hadron.Logger
+import           Hadron.Run.FanOut
 import           Hadron.Utils
 -------------------------------------------------------------------------------
 
@@ -325,6 +327,16 @@ hdfsPut :: HadoopEnv -> FilePath -> FilePath -> IO ()
 hdfsPut HadoopEnv{..} localPath hdfsPath = void $
     rawSystem _hsBin ["fs", "-put", localPath, hdfsPath]
 
+
+-------------------------------------------------------------------------------
+-- | Create a new multiple output file manager.
+hdfsFanOut :: HadoopEnv -> IO FanOut
+hdfsFanOut HadoopEnv{..} = mkFanOut mkP
+    where
+      mkP fp = do
+        (Just h, _, _, _) <- createProcess $ (proc _hsBin ["fs", "-put", "-", fp])
+          { std_in = CreatePipe }
+        return h
 
 
 -------------------------------------------------------------------------------

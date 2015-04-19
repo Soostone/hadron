@@ -519,6 +519,9 @@ fileListTap settings loc = tap loc (Protocol enc dec)
     dec is = streamLines is >>= readHdfsFile settings
 
 
+
+
+
 data ContState = ContState {
       _csMRCount      :: ! Int
     -- ^ MR run count; one for each 'connect'.

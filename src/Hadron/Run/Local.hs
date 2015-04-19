@@ -42,6 +42,7 @@ import qualified System.IO.Streams     as S
 import           System.Process
 -------------------------------------------------------------------------------
 import           Hadron.Logger
+import           Hadron.Run.FanOut
 import qualified Hadron.Run.Hadoop     as H
 import           Hadron.Utils
 -------------------------------------------------------------------------------
@@ -260,6 +261,11 @@ hdfsPut src dest = do
     src' <- path src
     dest' <- path dest
     liftIO $ copyFile src' dest'
+
+-------------------------------------------------------------------------------
+-- | Create a new multiple output file manager.
+hdfsFanOut :: IO FanOut
+hdfsFanOut = mkFanOut (flip openFile AppendMode)
 
 
 -------------------------------------------------------------------------------
