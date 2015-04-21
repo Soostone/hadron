@@ -216,14 +216,14 @@ decodeReducerInput mro mrInPrism =
     C.mapMaybe (_2 (firstOf mrInPrism))
 
 
--- | An easy way to construct a reducer pogram. Just supply the
--- arguments and you're done.
+-- | Create a reducer program.
 reducer
     :: MROptions
     -> Prism' B.ByteString a
     -- ^ Input conversion function
     -> Reducer CompositeKey a B.ByteString
-    -- ^ A step function for the given key.
+    -- ^ A step function for any given key. Will be rerun from scratch
+    -- for each unique key based on MROptions.
     -> IO ()
 reducer mro@MROptions{..} mrInPrism f = runResourceT $ do
     setLineBuffering

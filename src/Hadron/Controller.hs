@@ -69,6 +69,7 @@ module Hadron.Controller
     , binaryDirTap
     , setupBinaryDir
     , fileListTap
+    , fanOutTap
     , readTap
     , readHdfsFile
 
@@ -127,12 +128,15 @@ import qualified Control.Monad.Operational    as O
 import           Control.Monad.State
 import           Control.Monad.Trans.Resource
 import           Control.Retry
+import qualified Crypto.Hash.MD5              as Crypto
+import qualified Data.ByteString.Base16       as Base16
 import qualified Data.ByteString.Char8        as B
 import           Data.ByteString.Search       as B
 import           Data.Conduit                 hiding (connect)
 import           Data.Conduit.Binary          (sinkHandle, sourceHandle)
 import qualified Data.Conduit.List            as C
 import           Data.Conduit.Zlib
+import           Data.CSV.Conduit
 import           Data.Default
 import           Data.List
 import qualified Data.Map.Strict              as M
@@ -141,10 +145,12 @@ import           Data.RNG
 import           Data.SafeCopy
 import           Data.Serialize
 import           Data.String
+import           Data.String.Conv
 import qualified Data.Text                    as T
 import           Data.Text.Encoding
 import           Data.Time
 import           Data.Typeable
+import           Network.HostName
 import           System.Environment
 import           System.FilePath.Lens
 import           System.IO
@@ -516,7 +522,42 @@ fileListTap settings loc = tap loc (Protocol enc dec)
     dec = linesConduit =$= readHdfsFile settings
 
 
+-------------------------------------------------------------------------------
+-- | Sink objects into multiple output files through concurrent
+-- file-write processes behind the scenes. Work-around for Hadoop
+-- Streaming limitations in having to sink output into a single
+-- provided HDFS path.
+fanOutTap
+    :: RunContext
+    -> FilePath
+    -- ^ Static location where fanout statistics will be written via
+    -- the regular hadoop output.
+    -> (a -> FilePath)
+    -- ^ Decision dispatch of where each object should go. Make sure
+    -- to provide fully qualified hdfs directory paths; a unique token
+    -- will be appended to each file based on the node producing it.
+    -> Protocol' a
+    -- ^ How to serialize each object. We ask for a full 'Protocol'
+    -- here (even though it's more than we need) so that the output is
+    -- compatible with various ways of reading input in this
+    -- framework.
+    -> Tap a
+fanOutTap rc loc dispatch proto = tap loc (Protocol enc dec)
+    where
+      dec = error "fanOutTap can't be used to read input."
+      enc = do
+          hn <- liftIO $ (toS . Base16.encode . toS . Crypto.hash . toS)
+            <$> getHostName
+          let dispatch' a = dispatch a <> "_" <> hn
+          fo <- liftIO $ hdfsFanOut rc
+          register $ liftIO $ fanCloseAll fo
+          sinkFanOut dispatch' conv fo
+          stats <- liftIO $ fanStats fo
+          (forM_ (M.toList stats) $ \ (fp, cnt) -> yield (map B.pack [fp, (show cnt)]))
+            =$= fromCSV def
 
+      conv a = liftM mconcat $
+               C.sourceList [a] =$= (proto ^. protoEnc) $$ C.consume
 
 
 data ContState = ContState {

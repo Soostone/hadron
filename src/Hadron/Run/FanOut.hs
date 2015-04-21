@@ -1,3 +1,5 @@
+{-# LANGUAGE BangPatterns    #-}
+{-# LANGUAGE RankNTypes      #-}
 {-# LANGUAGE TemplateHaskell #-}
 
 -----------------------------------------------------------------------------
@@ -20,6 +22,8 @@ module Hadron.Run.FanOut
     , fanWrite
     , fanClose
     , fanCloseAll
+    , sinkFanOut
+    , fanStats
     ) where
 
 -------------------------------------------------------------------------------
@@ -27,14 +31,22 @@ import           Control.Applicative
 import           Control.Concurrent.MVar
 import           Control.Lens
 import           Control.Monad
+import           Control.Monad.Trans
 import qualified Data.ByteString.Char8   as B
+import           Data.Conduit
+import qualified Data.Conduit.List       as C
 import qualified Data.Map.Strict         as M
 import           System.IO
 -------------------------------------------------------------------------------
 
+data FileHandle = FileHandle {
+      _fhHandle :: Handle
+    , _fhCount  :: !Int
+    }
+makeLenses ''FileHandle
 
 data FanOut = FanOut {
-      _fanFiles  :: MVar (M.Map FilePath Handle)
+      _fanFiles  :: MVar (M.Map FilePath FileHandle)
     , _fanCreate :: FilePath -> IO Handle
     }
 makeLenses ''FanOut
@@ -53,10 +65,12 @@ mkFanOut f = FanOut <$> newMVar M.empty <*> pure f
 fanWrite :: FanOut -> FilePath -> B.ByteString -> IO ()
 fanWrite fo fp bs = modifyMVar_ (fo ^. fanFiles) $ \ m -> go m
   where
-    go m | Just h <- M.lookup fp m = B.hPut h bs >> return m
-    go m = do
+    go !m | Just fh <- M.lookup fp m = do
+      B.hPut (fh ^. fhHandle) bs
+      return $! m & at fp . _Just . fhCount %~ (+1)
+    go !m = do
       r <- (fo ^. fanCreate) fp
-      go $! M.insert fp r m
+      go $! M.insert fp (FileHandle r 0) m
 
 
 -------------------------------------------------------------------------------
@@ -64,7 +78,9 @@ fanWrite fo fp bs = modifyMVar_ (fo ^. fanFiles) $ \ m -> go m
 fanClose :: FanOut -> FilePath -> IO ()
 fanClose fo fp = modifyMVar_ (fo ^. fanFiles) $ \ m -> case m ^. at fp of
   Nothing -> return m
-  Just h -> hClose h >> (return $! m & at fp .~ Nothing)
+  Just fh -> do
+      hClose (fh ^. fhHandle)
+      return $! m & at fp .~ Nothing
 
 
 -------------------------------------------------------------------------------
@@ -72,7 +88,31 @@ fanClose fo fp = modifyMVar_ (fo ^. fanFiles) $ \ m -> case m ^. at fp of
 -- would spawn new processes to write into files.
 fanCloseAll :: FanOut -> IO ()
 fanCloseAll fo = modifyMVar_ (fo ^. fanFiles) $ \m -> do
-  forM_ (M.toList m) $ \ (_fp, h) -> hClose h
+  forM_ (M.toList m) $ \ (_fp, fh) -> hClose (fh ^. fhHandle)
   return M.empty
+
+
+-------------------------------------------------------------------------------
+-- | Grab # of writes into each file so far.
+fanStats :: FanOut -> IO (M.Map FilePath Int)
+fanStats fo = do
+    m <- modifyMVar (fo ^. fanFiles) $ \ m -> return (m,m)
+    return $ M.map (^. fhCount) m
+
+
+-------------------------------------------------------------------------------
+-- | Sink a stream into 'FanOut'.
+sinkFanOut
+    :: MonadIO m
+    => (a -> FilePath)
+    -> (a -> m B.ByteString)
+    -> FanOut
+    -> Consumer a m Int
+sinkFanOut dispatch conv fo = C.foldM go 0
+    where
+      go !i a = do
+          bs <- conv a
+          liftIO (fanWrite fo (dispatch a) bs)
+          return $! i + 1
 
 

@@ -82,7 +82,7 @@ type Protocol' a = Protocol B.ByteString a
 --
 -- Most of the time we'll be using 'Protocol\''s.
 data Protocol b a = Protocol {
-      _protoEnc :: Conduit a (ResourceT IO ) b
+      _protoEnc :: Conduit a (ResourceT IO) b
     , _protoDec :: Conduit b (ResourceT IO) a
     }
 makeLenses ''Protocol
