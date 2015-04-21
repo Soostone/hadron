@@ -88,6 +88,28 @@ path (LocalFile fp) = do
 
 
 -------------------------------------------------------------------------------
+getRecursiveDirectoryContents :: FilePath -> IO [FilePath]
+getRecursiveDirectoryContents dir0 = go dir0
+    where
+      go dir = do
+          fs <- liftM (map (dir </>) . filter (not . flip elem [".", ".."])) $
+            getDirectoryContents' dir
+          fss <- mapM go fs
+          return $ fs ++ concat fss
+
+
+-------------------------------------------------------------------------------
+-- | A version that return [] instead of an error when directory does not exit.
+getDirectoryContents' :: FilePath -> IO [FilePath]
+getDirectoryContents' fp = do
+    chk <- doesDirectoryExist fp
+    case chk of
+      False -> return []
+      True -> getDirectoryContents fp
+
+
+
+-------------------------------------------------------------------------------
 localMapReduce
     :: MonadIO m
     => LocalRunSettings
@@ -106,10 +128,7 @@ localMapReduce ls mrKey token H.HadoopRunOpts{..} = do
         chk <- doesDirectoryExist fp
         case chk of
           False -> return [fp]
-          True -> do
-            fs <- getDirectoryContents fp
-            return $ map (fp </>)
-                   $ filter (not . flip elem [".", ".."]) fs
+          True -> getRecursiveDirectoryContents fp
 
 
     let enableCompress = case _mrsCompress of
@@ -245,14 +264,6 @@ hdfsLs p = do
     return $ map (File "" 1 "" "") $ map (_unLocalFile p </>) fs
 
 
--------------------------------------------------------------------------------
--- | A version that return [] instead of an error when directory does not exit.
-getDirectoryContents' :: FilePath -> IO [FilePath]
-getDirectoryContents' fp = do
-    chk <- doesDirectoryExist fp
-    case chk of
-      False -> return []
-      True -> getDirectoryContents fp
 
 -------------------------------------------------------------------------------
 hdfsPut
