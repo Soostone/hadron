@@ -170,6 +170,7 @@ localMapReduce ls mrKey token H.HadoopRunOpts{..} = do
         reduceFiles = do
             fs <- getTempMapFiles
             echoInfo ("Running command: " <> (command fs))
+            scriptIO $ createDirectoryIfMissing True (outFile ^. directory)
             clearExit $ scriptIO $ system (command fs)
           where
             command fs =
