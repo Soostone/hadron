@@ -94,8 +94,9 @@ getRecursiveDirectoryContents dir0 = go dir0
       go dir = do
           fs <- liftM (map (dir </>) . filter (not . flip elem [".", ".."])) $
             getDirectoryContents' dir
+          fs' <- filterM (fmap not . doesDirectoryExist) fs
           fss <- mapM go fs
-          return $ fs ++ concat fss
+          return $ fs' ++ concat fss
 
 
 -------------------------------------------------------------------------------
@@ -117,14 +118,13 @@ localMapReduce
     -> String                   -- ^ RunToken
     -> H.HadoopRunOpts
     -> EitherT String m ()
-localMapReduce ls mrKey token H.HadoopRunOpts{..} = do
+localMapReduce lrs mrKey token H.HadoopRunOpts{..} = do
     exPath <- scriptIO getExecutablePath
-    liftIO $ infoM "Hadron.Run.Local" $
-      "Launching Hadoop job for MR key: " <> mrKey
+    echoInfo $ "Launching Hadoop job for MR key: " <> ls mrKey
 
 
     expandedInput <- liftIO $ liftM concat $ forM _mrsInput $ \ inp ->
-      withLocalFile ls (LocalFile inp) $ \ fp -> do
+      withLocalFile lrs (LocalFile inp) $ \ fp -> do
         chk <- doesDirectoryExist fp
         case chk of
           False -> return [fp]
@@ -139,7 +139,7 @@ localMapReduce ls mrKey token H.HadoopRunOpts{..} = do
         inputCompressed file = isInfixOf ".gz" file
 
 
-    outFile <- liftIO $ withLocalFile ls (LocalFile _mrsOutput) $ \ fp ->
+    outFile <- liftIO $ withLocalFile lrs (LocalFile _mrsOutput) $ \ fp ->
       case fp ^. extension . to null of
         False -> return fp
         True -> do
@@ -163,7 +163,7 @@ localMapReduce ls mrKey token H.HadoopRunOpts{..} = do
 
         -- map over each file individually and write results into a temp file
         mapFile infile = clearExit . scriptIO . withTmpMapFile infile $ \ fp -> do
-            echoInfo ("Running command: " <> (command fp))
+            echoInfo ("Running command: " <> ls (command fp))
 #if MIN_VERSION_base(4, 7, 0)
             setEnv "mapreduce_map_input_file" infile
 #else
@@ -180,7 +180,7 @@ localMapReduce ls mrKey token H.HadoopRunOpts{..} = do
 
         -- a unique temp file for each input file
         withTmpMapFile infile f = liftIO $
-          withLocalFile ls (LocalFile ((show (hash infile)) <> "_mapout")) f
+          withLocalFile lrs (LocalFile ((show (hash infile)) <> "_mapout")) f
 
 
         getTempMapFiles = mapM (flip withTmpMapFile return) expandedInput
@@ -188,7 +188,7 @@ localMapReduce ls mrKey token H.HadoopRunOpts{..} = do
         -- concat all processed map output, sort and run through the reducer
         reduceFiles = do
             fs <- getTempMapFiles
-            echoInfo ("Running command: " <> (command fs))
+            echoInfo ("Running command: " <> ls (command fs))
             scriptIO $ createDirectoryIfMissing True (outFile ^. directory)
             clearExit $ scriptIO $ system (command fs)
           where
@@ -204,18 +204,23 @@ localMapReduce ls mrKey token H.HadoopRunOpts{..} = do
             mapM_ removeFile fs
 
 
-    liftIO $ infoM "Hadron.Run.Local" "Mapping over all local files"
+    echoInfo "Mapping over individual local input files."
     mapM_ mapFile expandedInput
 
-    liftIO $ infoM "Hadron.Run.Local" "Executing reduce stage."
+    echoInfo "Executing reduce stage."
     reduceFiles
 
     removeTempFiles
 
 
 -------------------------------------------------------------------------------
-echoInfo :: MonadIO m => String -> m ()
-echoInfo msg = liftIO $ infoM "Hadron.Run.Local" msg
+echo :: (Applicative m, MonadIO m) => Severity -> LogStr -> m ()
+echo sev msg = runLog $ logMsg "Local" sev msg
+
+
+-------------------------------------------------------------------------------
+echoInfo :: (Applicative m, MonadIO m) => LogStr -> m ()
+echoInfo = echo InfoS
 
 
 -------------------------------------------------------------------------------
@@ -224,9 +229,9 @@ clearExit :: MonadIO m => EitherT String m ExitCode -> EitherT [Char] m ()
 clearExit f = do
     res <- f
     case res of
-      ExitSuccess -> liftIO $ infoM "Hadron.Run.Local" "Command successful."
+      ExitSuccess -> echoInfo "Command successful."
       e -> do
-        liftIO . errorM "Hadron.Run.Local" $ "Command failed: " ++ show e
+        echo ErrorS $ ls $ "Command failed: " ++ show e
         hoistEither $ Left $ "Command failed with: " ++ show e
 
 
@@ -276,10 +281,16 @@ hdfsPut src dest = do
     dest' <- path dest
     liftIO $ copyFile src' dest'
 
+
 -------------------------------------------------------------------------------
 -- | Create a new multiple output file manager.
-hdfsFanOut :: IO FanOut
-hdfsFanOut = mkFanOut (flip openFile AppendMode)
+hdfsFanOut :: (MonadIO m, MonadReader LocalRunSettings m) => m FanOut
+hdfsFanOut = do
+    env <- ask
+    liftIO $ mkFanOut $ \ fp -> do
+      fp' <- runLocal env $ path (LocalFile fp)
+      createDirectoryIfMissing True (fp' ^. directory)
+      openFile fp' AppendMode
 
 
 -------------------------------------------------------------------------------

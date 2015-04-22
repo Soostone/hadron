@@ -216,21 +216,30 @@ decodeReducerInput mro mrInPrism =
     C.mapMaybe (_2 (firstOf mrInPrism))
 
 
+-------------------------------------------------------------------------------
+reducerMain
+    :: MROptions
+    -> Prism' B.ByteString a
+    -> Reducer CompositeKey a B.ByteString
+    -> IO ()
+reducerMain mro p f = do
+    setLineBuffering
+    runResourceT $ reducer mro p f $$ sinkHandle stdout
+
+
 -- | Create a reducer program.
 reducer
     :: MROptions
     -> Prism' B.ByteString a
     -- ^ Input conversion function
-    -> Reducer CompositeKey a B.ByteString
+    -> Reducer CompositeKey a b
     -- ^ A step function for any given key. Will be rerun from scratch
     -- for each unique key based on MROptions.
-    -> IO ()
-reducer mro@MROptions{..} mrInPrism f = runResourceT $ do
-    setLineBuffering
+    -> Producer (ResourceT IO) b
+reducer mro@MROptions{..} mrInPrism f = do
     sourceHandle stdin =$=
       decodeReducerInput mro mrInPrism =$=
-      go2 $$
-      sinkHandle stdout
+      go2
     where
       go2 = do
         next <- await
@@ -278,7 +287,7 @@ mapReduce
 mapReduce mro mrInPrism f g = (mp, rd)
     where
       mp = mapperWith mrInPrism f
-      rd = reducer mro mrInPrism g
+      rd = reducerMain mro mrInPrism g
 
 
 

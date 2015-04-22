@@ -54,6 +54,7 @@ module Hadron.Run.Hadoop
     ) where
 
 -------------------------------------------------------------------------------
+import           Control.Applicative
 import           Control.Error
 import           Control.Lens
 import           Control.Monad
@@ -77,6 +78,17 @@ import           Hadron.Logger
 import           Hadron.Run.FanOut
 import           Hadron.Utils
 -------------------------------------------------------------------------------
+
+
+-------------------------------------------------------------------------------
+echo :: (Applicative m, MonadIO m) => Severity -> LogStr -> m ()
+echo sev msg = runLog $ logMsg "Run.Hadoop" sev msg
+
+
+-------------------------------------------------------------------------------
+echoInfo :: (Applicative m, MonadIO m) => LogStr -> m ()
+echoInfo = echo InfoS
+
 
 
 data HadoopEnv = HadoopEnv {
@@ -200,17 +212,17 @@ hadoopMapReduce
 hadoopMapReduce HadoopEnv{..} mrKey runToken HadoopRunOpts{..} = do
     exec <- scriptIO getExecutablePath
     prog <- scriptIO getProgName
-    liftIO $ infoM "Hadron.Hadoop" $ "Launching Hadoop job for MR key: " <> mrKey
+    echoInfo $ "Launching Hadoop job for MR key: " <> ls mrKey
 
     let args = mkArgs exec prog
 
-    liftIO . infoM "Hadron.Hadoop" $ "Hadoop arguments: " <> (intercalate " " args)
+    echoInfo $ "Hadoop arguments: " <> ls (intercalate " " args)
 
     (code, out, eout) <- scriptIO $ readProcessWithExitCode _hsBin args ""
     case code of
       ExitSuccess -> return ()
       e -> do
-        liftIO . errorM "Hadron.Hadoop" $ intercalate "\n"
+        echo ErrorS $ ls $ intercalate "\n"
           [ "Hadoop job failed.", "StdOut:"
           , out, "", "StdErr:", eout]
         hoistEither $ Left $ "MR job failed with: " ++ show e
@@ -405,3 +417,4 @@ hdfsGet HadoopEnv{..} p local = do
 -------------------------------------------------------------------------------
 makeLenses ''HadoopEnv
 -------------------------------------------------------------------------------
+

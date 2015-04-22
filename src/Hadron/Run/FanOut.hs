@@ -1,6 +1,7 @@
-{-# LANGUAGE BangPatterns    #-}
-{-# LANGUAGE RankNTypes      #-}
-{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE BangPatterns      #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RankNTypes        #-}
+{-# LANGUAGE TemplateHaskell   #-}
 
 -----------------------------------------------------------------------------
 -- |
@@ -39,12 +40,15 @@ import qualified Data.Map.Strict         as M
 import           System.IO
 -------------------------------------------------------------------------------
 
+-- | An open file handle
 data FileHandle = FileHandle {
       _fhHandle :: Handle
     , _fhCount  :: !Int
     }
 makeLenses ''FileHandle
 
+
+-- | Concurrent multi-output manager.
 data FanOut = FanOut {
       _fanFiles  :: MVar (M.Map FilePath FileHandle)
     , _fanCreate :: FilePath -> IO Handle
@@ -63,11 +67,13 @@ mkFanOut f = FanOut <$> newMVar M.empty <*> pure f
 -- | Write into a file. A new process will be spawned if this is the
 -- first time writing into this file.
 fanWrite :: FanOut -> FilePath -> B.ByteString -> IO ()
-fanWrite fo fp bs = modifyMVar_ (fo ^. fanFiles) $ \ m -> go m
+fanWrite fo fp bs = modifyMVar_ (fo ^. fanFiles) go
   where
+
     go !m | Just fh <- M.lookup fp m = do
       B.hPut (fh ^. fhHandle) bs
-      return $! m & at fp . _Just . fhCount %~ (+1)
+      return $! M.insert fp (fh & fhCount %~ (+1)) m
+
     go !m = do
       r <- (fo ^. fanCreate) fp
       go $! M.insert fp (FileHandle r 0) m
@@ -114,5 +120,16 @@ sinkFanOut dispatch conv fo = C.foldM go 0
           bs <- conv a
           liftIO (fanWrite fo (dispatch a) bs)
           return $! i + 1
+
+
+-------------------------------------------------------------------------------
+test :: IO ()
+test = do
+    fo <- mkFanOut $ \ fp -> openFile fp AppendMode
+    fanWrite fo "test1" "foo"
+    fanWrite fo "test1" "bar"
+    fanWrite fo "test1" "tak"
+    print =<< fanStats fo
+    fanCloseAll fo
 
 

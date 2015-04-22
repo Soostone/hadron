@@ -170,6 +170,16 @@ import           Hadron.Utils
 -------------------------------------------------------------------------------
 
 
+-------------------------------------------------------------------------------
+echo :: (Applicative m, MonadIO m) => Severity -> LogStr -> m ()
+echo sev msg = runLog $ logMsg "Run.Hadoop" sev msg
+
+
+-------------------------------------------------------------------------------
+echoInfo :: (Applicative m, MonadIO m) => LogStr -> m ()
+echoInfo = echo InfoS
+
+
 newtype SingleKey a = SingleKey { unKey :: a }
     deriving (Eq,Show,Read,Ord,Serialize)
 
@@ -480,9 +490,9 @@ fanOutTap rc loc dispatch proto = tap loc (Protocol enc dec)
       enc = do
           hn <- liftIO $ (toS . Base16.encode . toS . Crypto.hash . toS)
             <$> getHostName
-          let dispatch' a = dispatch a <> "_" <> hn
+          let dispatch' a = dispatch a & basename %~ (<> "_" <> hn)
           fo <- liftIO $ hdfsFanOut rc
-          register $ liftIO $ fanCloseAll fo
+          -- register $ liftIO $ fanCloseAll fo
           sinkFanOut dispatch' conv fo
           stats <- liftIO $ fanStats fo
           (forM_ (M.toList stats) $ \ (fp, cnt) -> yield (map B.pack [fp, (show cnt)]))
@@ -691,7 +701,7 @@ pickIdWith l = do
 -------------------------------------------------------------------------------
 -- | Interpreter for the central job control process
 orchestrate
-    :: (MonadMask m, MonadIO m)
+    :: (MonadMask m, MonadIO m, Applicative m)
     => Controller a
     -> RunContext
     -> RerunStrategy
@@ -701,11 +711,7 @@ orchestrate (Controller p) settings rr s = do
     bracket
       (liftIO $ openFile "hadron.log" AppendMode)
       (liftIO . hClose)
-      (\ h -> do liftIO $ do
-                   enableDebugLog
-                   hSetBuffering h LineBuffering
-                   setLogHandle "Hadron" h INFO
-                   infoM "Hadron.Controller" "Initiating orchestration..."
+      (\ h -> do echoInfo  "Initiating orchestration..."
                  evalStateT (runEitherT (go p)) s)
     where
       go = eval . O.view
@@ -768,29 +774,29 @@ orchestrate (Controller p) settings rr s = do
             go' = do
                 mrKey <- newMRKey
 
-                liftIO $ infoM "Hadron.Controller"
-                  ("Launching MR job with key: " ++ show mrKey)
+                echoInfo $ ls $
+                  "Launching MR job " ++ show mrKey ++ maybe "" (": " ++) nm
 
                 chk <- liftIO $ mapM (hdfsFileExists settings) (_location outp)
                 case any id chk of
                   False -> do
-                      liftIO $ infoM "Hadron.Controller"
-                        "Destination file does not exist. Proceeding."
+                      echoInfo "Destination file does not exist. Proceeding."
                       go'' mrKey
                   True ->
                     case rr of
-                      RSFail -> liftIO $ errorM "Hadron.Controller" $
+                      RSFail -> echo ErrorS $ ls $
                         "Destination exists: " <> head (_location outp)
-                      RSSkip -> liftIO $ infoM "Hadron.Controller" $
-                        "Destination exists. Skipping " <> intercalate ", " (_location outp)
+                      RSSkip -> echoInfo $
+                        "Destination exists. Skipping " <>
+                        ls (intercalate ", " (_location outp))
                       RSReRun -> do
-                        liftIO $ infoM "Hadron.Controller" $
+                        echoInfo $ ls $
                           "Destination file exists, will delete and rerun: " <>
                           head (_location outp)
                         _ <- liftIO $ mapM_ (hdfsDeletePath settings) (_location outp)
                         go'' mrKey
 
-                        liftIO $ infoM "Hadron.Controller" ("MR job complete: " ++ show mrKey)
+                        echoInfo $ ls $ "MR job complete: " ++ show mrKey
 
 
             go'' mrKey = do
@@ -865,6 +871,12 @@ makePrisms ''NodeError
 
 instance Exception NodeError
 
+class AsNodeError t where
+    _NodeError :: Prism' t NodeError
+
+instance AsNodeError NodeError where _NodeError = id
+instance AsNodeError SomeException where _NodeError = exception
+
 
 -------------------------------------------------------------------------------
 -- | The main entry point. Use this function to produce a command line
@@ -875,7 +887,8 @@ instance Exception NodeError
 -- mapper/reducer executable when called with right arguments, though
 -- you don't have to worry about that.
 hadoopMain
-    :: forall m a. (MonadThrow m, MonadMask m, MonadIO m, Functor m)
+    :: forall m a. ( MonadThrow m, MonadMask m
+                   , MonadIO m, Functor m, Applicative m )
     => Controller a
     -- ^ The Hadoop streaming application to run.
     -> RunContext
@@ -1018,7 +1031,12 @@ workNode settings (Controller p) runToken arg = do
 
               red = case rd of
                 Right _ -> error "Unexpected: Reducer called for a map-only job."
-                Left f -> reducer mro mrInPrism (C.map decodeKey =$= f =$= enc)
+                Left f -> do
+                  setLineBuffering
+                  runResourceT $
+                        reducer mro mrInPrism (C.map decodeKey =$= f)
+                    =$= enc
+                     $$ sinkHandle stdout
 
               comb' = case comb of
                   Nothing -> error "Unexpected: No combiner supplied."

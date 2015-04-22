@@ -147,7 +147,7 @@ hdfsPut rc f1 f2 = case rc of
 -------------------------------------------------------------------------------
 hdfsFanOut :: RunContext -> IO FanOut
 hdfsFanOut rc = case rc of
-    LocalRun _ -> L.hdfsFanOut
+    LocalRun lcs -> L.runLocal lcs L.hdfsFanOut
     HadoopRun e _ -> H.hdfsFanOut e
 
 
