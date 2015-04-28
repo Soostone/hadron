@@ -348,6 +348,7 @@ hdfsFanOut HadoopEnv{..} = mkFanOut mkP
       mkP fp = do
         (Just h, _, _, _) <- createProcess $ (proc _hsBin ["fs", "-put", "-", fp])
           { std_in = CreatePipe }
+        hSetBuffering h LineBuffering
         return h
 
 
