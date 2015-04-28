@@ -11,7 +11,9 @@ import           Control.Monad
 import           Control.Monad.Trans
 import           Data.Conduit
 import           Data.List.Split
+import           Numeric
 import           Safe
+import           System.Random       (randomRIO)
 -------------------------------------------------------------------------------
 
 
@@ -56,6 +58,17 @@ parseLs str =
              <*> xs !? 3
              <*> xs !? 4
              <*> xs !? 5
+
+
+-------------------------------------------------------------------------------
+-- | Generate a random token
+randomToken :: Int -> IO String
+randomToken n = do
+    is <- sequence . take n $ repeat mk
+    return $ concat $ map (flip showHex "") is
+  where
+    mk :: IO Int
+    mk = randomRIO (0,15)
 
 
 -------------------------------------------------------------------------------

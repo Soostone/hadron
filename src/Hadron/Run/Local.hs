@@ -34,7 +34,6 @@ import           Data.Default
 import           Data.Hashable
 import           Data.List
 import           Data.Monoid
-import           Data.RNG
 import           System.Directory
 import           System.Environment
 import           System.Exit
@@ -323,7 +322,7 @@ hdfsLocalStream = hdfsCat
 
 -------------------------------------------------------------------------------
 randomFileName :: MonadIO m => m LocalFile
-randomFileName = (LocalFile . B.unpack) `liftM` liftIO (mkRNG >>= randomToken 64)
+randomFileName = LocalFile `liftM` liftIO (randomToken 64)
 
 
 

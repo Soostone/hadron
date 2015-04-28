@@ -69,7 +69,7 @@ library
                        process,
                        resourcet,
                        retry                        >= 0.5.1 && < 0.8,
-                       rng-utils,
+                       random                       >= 1.0 && < 1.2,
                        safe,
                        safecopy                     >= 0.8 && < 0.9,
                        split,

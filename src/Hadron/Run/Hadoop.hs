@@ -67,7 +67,6 @@ import           Data.Default
 import           Data.List
 import           Data.List.LCS.HuntSzymanski
 import           Data.Monoid
-import           Data.RNG
 import qualified Data.Text                   as T
 import           System.Environment
 import           System.Exit
@@ -397,9 +396,9 @@ tmpRoot = "/tmp/hadron/"
 -- | Generates a random filename in the /tmp/hadron directory.
 randomFilename :: HadoopEnv -> IO FilePath
 randomFilename settings = do
-    tk <- mkRNG >>= randomToken 64
+    tk <- randomToken 64
     hdfsMkdir settings tmpRoot
-    return $ B.unpack $ B.concat [B.pack tmpRoot, tk]
+    return $ B.unpack $ B.concat [B.pack tmpRoot, B.pack tk]
 
 
 -------------------------------------------------------------------------------

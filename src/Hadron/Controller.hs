@@ -141,7 +141,6 @@ import           Data.Default
 import           Data.List
 import qualified Data.Map.Strict              as M
 import           Data.Monoid
-import           Data.RNG
 import           Data.SafeCopy
 import           Data.Serialize
 import           Data.String
@@ -488,7 +487,8 @@ fanOutTap rc loc dispatch proto = tap loc (Protocol enc dec)
     where
       dec = error "fanOutTap can't be used to read input."
       enc = do
-          hn <- liftIO $ (toS . Base16.encode . toS . Crypto.hash . toS)
+          tk <- liftIO $ randomToken 64
+          hn <- liftIO $ (toS . Base16.encode . toS . Crypto.hash . toS . (++ tk))
             <$> getHostName
           let dispatch' a = dispatch a & basename %~ (<> "_" <> hn)
           fo <- liftIO $ hdfsFanOut rc
@@ -803,7 +803,7 @@ orchestrate (Controller p) settings rr s = do
 
               -- serialize current state to HDFS, to be read by
               -- individual mappers reducers of this step.
-              runToken <- liftIO $ (mkRNG >>= randomToken 64) <&> B.unpack
+              runToken <- liftIO $ randomToken 64
               remote <- hdfsTempFilePath settings runToken
               let local = LocalFile runToken
 
