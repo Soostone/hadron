@@ -211,9 +211,7 @@ deserialize = Ser.decode <=< Base64.decode
 -- >>> firstOf (re myPrism) myObject
 -- Just byteStr
 pSerialize :: Ser.Serialize a => Prism' B.ByteString a
-pSerialize = prism
-  serialize
-  (\x -> either (const $ Left x) Right $ deserialize x)
+pSerialize = prism' serialize (hush . deserialize)
 
 
 -------------------------------------------------------------------------------
