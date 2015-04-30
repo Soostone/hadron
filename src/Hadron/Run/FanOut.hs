@@ -42,8 +42,9 @@ import           System.IO
 
 -- | An open file handle
 data FileHandle = FileHandle {
-      _fhHandle :: Handle
-    , _fhCount  :: !Int
+      _fhHandle       :: Handle
+    , _fhCount        :: !Int
+    , _fhPendingCount :: !Int
     }
 makeLenses ''FileHandle
 
@@ -72,11 +73,17 @@ fanWrite fo fp bs = modifyMVar_ (fo ^. fanFiles) go
 
     go !m | Just fh <- M.lookup fp m = do
       B.hPut (fh ^. fhHandle) bs
-      return $! M.insert fp (fh & fhCount %~ (+1)) m
+      let newCount = fh ^. fhPendingCount + B.length bs
+      upFun <- case (newCount >= 131072) of
+        True -> do
+          hFlush (fh ^. fhHandle)
+          return $ fhPendingCount .~ 0
+        False -> return $ fhPendingCount .~ newCount
+      return $! M.insert fp (fh & upFun . (fhCount %~ (+1))) m
 
     go !m = do
       r <- (fo ^. fanCreate) fp
-      go $! M.insert fp (FileHandle r 0) m
+      go $! M.insert fp (FileHandle r 0 0) m
 
 
 -------------------------------------------------------------------------------
