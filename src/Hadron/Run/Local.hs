@@ -37,6 +37,7 @@ import           Data.Monoid
 import           System.Directory
 import           System.Environment
 import           System.Exit
+import           System.FilePath.Glob
 import           System.FilePath.Lens
 import           System.FilePath.Posix
 import           System.IO
@@ -123,11 +124,7 @@ localMapReduce lrs mrKey token H.HadoopRunOpts{..} = do
 
 
     expandedInput <- liftIO $ liftM concat $ forM _mrsInput $ \ inp ->
-      withLocalFile lrs (LocalFile inp) $ \ fp -> do
-        chk <- doesDirectoryExist fp
-        case chk of
-          False -> return [fp]
-          True -> getRecursiveDirectoryContents fp
+      withLocalFile lrs (LocalFile inp) glob
 
 
     let enableCompress = case _mrsCompress of
