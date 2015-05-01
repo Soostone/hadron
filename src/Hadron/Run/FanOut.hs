@@ -43,6 +43,7 @@ import           System.IO
 -- | An open file handle
 data FileHandle = FileHandle {
       _fhHandle       :: Handle
+    , _fhPath         :: FilePath
     , _fhCount        :: !Int
     , _fhPendingCount :: !Int
     }
@@ -51,8 +52,9 @@ makeLenses ''FileHandle
 
 -- | Concurrent multi-output manager.
 data FanOut = FanOut {
-      _fanFiles  :: MVar (M.Map FilePath FileHandle)
-    , _fanCreate :: FilePath -> IO Handle
+      _fanFiles    :: MVar (M.Map FilePath FileHandle)
+    , _fanCreate   :: FilePath -> IO Handle
+    , _fanFinalize :: FilePath -> IO ()
     }
 makeLenses ''FanOut
 
@@ -60,8 +62,13 @@ makeLenses ''FanOut
 -------------------------------------------------------------------------------
 -- | Make a new fanout manager that will use given process creator.
 -- Process is expected to pipe its stdin into the desired location.
-mkFanOut :: (FilePath -> IO Handle) -> IO FanOut
-mkFanOut f = FanOut <$> newMVar M.empty <*> pure f
+mkFanOut
+    :: (FilePath -> IO Handle)
+    -- ^ Open a handle for a given target path
+    -> (FilePath -> IO ())
+    -- ^ Finalize hook after handle for target path has been closed.
+    -> IO FanOut
+mkFanOut f fin = FanOut <$> newMVar M.empty <*> pure f <*> pure fin
 
 
 -------------------------------------------------------------------------------
@@ -83,7 +90,15 @@ fanWrite fo fp bs = modifyMVar_ (fo ^. fanFiles) go
 
     go !m = do
       r <- (fo ^. fanCreate) fp
-      go $! M.insert fp (FileHandle r 0 0) m
+      go $! M.insert fp (FileHandle r fp 0 0) m
+
+
+-------------------------------------------------------------------------------
+closeHandle :: FanOut -> FileHandle -> IO ()
+closeHandle fo fh = do
+    hFlush $ fh ^. fhHandle
+    hClose $ fh ^. fhHandle
+    (fo ^. fanFinalize) (fh ^. fhPath)
 
 
 -------------------------------------------------------------------------------
@@ -92,7 +107,7 @@ fanClose :: FanOut -> FilePath -> IO ()
 fanClose fo fp = modifyMVar_ (fo ^. fanFiles) $ \ m -> case m ^. at fp of
   Nothing -> return m
   Just fh -> do
-      hClose (fh ^. fhHandle)
+      closeHandle fo fh
       return $! m & at fp .~ Nothing
 
 
@@ -101,7 +116,7 @@ fanClose fo fp = modifyMVar_ (fo ^. fanFiles) $ \ m -> case m ^. at fp of
 -- would spawn new processes to write into files.
 fanCloseAll :: FanOut -> IO ()
 fanCloseAll fo = modifyMVar_ (fo ^. fanFiles) $ \m -> do
-  forM_ (M.toList m) $ \ (_fp, fh) -> hClose (fh ^. fhHandle)
+  forM_ (M.toList m) $ \ (_fp, fh) -> closeHandle fo fh
   return M.empty
 
 
@@ -132,11 +147,13 @@ sinkFanOut dispatch conv fo = C.foldM go 0
 -------------------------------------------------------------------------------
 test :: IO ()
 test = do
-    fo <- mkFanOut $ \ fp -> openFile fp AppendMode
+    fo <- mkFanOut (\ fp -> openFile fp AppendMode) (const (return ()))
     fanWrite fo "test1" "foo"
     fanWrite fo "test1" "bar"
     fanWrite fo "test1" "tak"
     print =<< fanStats fo
     fanCloseAll fo
+    fanWrite fo "test1" "tak"
+
 
 

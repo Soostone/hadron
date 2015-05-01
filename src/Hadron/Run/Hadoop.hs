@@ -70,6 +70,8 @@ import           Data.Monoid
 import qualified Data.Text                   as T
 import           System.Environment
 import           System.Exit
+import           System.FilePath
+import           System.FilePath.Lens
 import           System.IO
 import           System.Process
 -------------------------------------------------------------------------------
@@ -342,14 +344,19 @@ hdfsPut HadoopEnv{..} localPath hdfsPath = void $
 
 -------------------------------------------------------------------------------
 -- | Create a new multiple output file manager.
-hdfsFanOut :: HadoopEnv -> IO FanOut
-hdfsFanOut HadoopEnv{..} = mkFanOut mkP
+hdfsFanOut :: HadoopEnv -> FilePath -> IO FanOut
+hdfsFanOut HadoopEnv{..} tmp = mkFanOut mkP fin
     where
+
+      mkTmp fp = tmp </> fp ^. filename
+
       mkP fp = do
-        (Just h, _, _, _) <- createProcess $ (proc _hsBin ["fs", "-put", "-", fp])
+        (Just h, _, _, _) <- createProcess $ (proc _hsBin ["fs", "-put", "-", mkTmp fp])
           { std_in = CreatePipe }
         hSetBuffering h LineBuffering
         return h
+
+      fin fp = void $ rawSystem _hsBin ["fs", "-mv", mkTmp fp, fp]
 
 
 -------------------------------------------------------------------------------

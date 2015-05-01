@@ -145,10 +145,14 @@ hdfsPut rc f1 f2 = case rc of
 
 
 -------------------------------------------------------------------------------
-hdfsFanOut :: RunContext -> IO FanOut
-hdfsFanOut rc = case rc of
-    LocalRun lcs -> L.runLocal lcs L.hdfsFanOut
-    HadoopRun e _ -> H.hdfsFanOut e
+hdfsFanOut
+    :: RunContext
+    -> FilePath
+    -- ^ A temporary folder where in-progress files can be placed
+    -> IO FanOut
+hdfsFanOut rc tmp = case rc of
+    LocalRun lcs -> L.runLocal lcs $ L.hdfsFanOut tmp
+    HadoopRun e _ -> H.hdfsFanOut e tmp
 
 
 -------------------------------------------------------------------------------

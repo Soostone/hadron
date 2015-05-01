@@ -437,7 +437,7 @@ mergeTaps ta tb = Tap (_location ta ++ _location tb) newP
 
 ------------------------------------------------------------------------------
 -- | Conduit that takes in hdfs filenames and outputs the file
--- contents.
+-- contents. Will unpack .gz files automatically.
 readHdfsFile :: RunContext -> Conduit B.ByteString (ResourceT IO) B.ByteString
 readHdfsFile settings = awaitForever $ \s3Uri -> do
     let uriStr = B.unpack s3Uri
@@ -453,10 +453,11 @@ readHdfsFile settings = awaitForever $ \s3Uri -> do
 -- limitation by instead making your input a list of file paths that contain
 -- binary data.  Then the file names get split by hadoop and each map job
 -- reads from those files as its first step.
-fileListTap :: RunContext
-            -> FilePath
-            -- ^ A file containing a list of files to be used as input
-            -> Tap B.ByteString
+fileListTap
+    :: RunContext
+    -> FilePath
+    -- ^ A file containing a list of files to be used as input
+    -> Tap B.ByteString
 fileListTap settings loc = tap loc (Protocol enc dec)
   where
     enc = error "You should never use a fileListTap as output!"
@@ -473,6 +474,8 @@ fanOutTap
     -> FilePath
     -- ^ Static location where fanout statistics will be written via
     -- the regular hadoop output.
+    -> FilePath
+    -- ^ A temporary location where in-progress files can be kept.
     -> (a -> FilePath)
     -- ^ Decision dispatch of where each object should go. Make sure
     -- to provide fully qualified hdfs directory paths; a unique token
@@ -483,7 +486,7 @@ fanOutTap
     -- compatible with various ways of reading input in this
     -- framework.
     -> Tap a
-fanOutTap rc loc dispatch proto = tap loc (Protocol enc dec)
+fanOutTap rc loc tmp dispatch proto = tap loc (Protocol enc dec)
     where
       dec = error "fanOutTap can't be used to read input."
       enc = do
@@ -491,8 +494,8 @@ fanOutTap rc loc dispatch proto = tap loc (Protocol enc dec)
           hn <- liftIO $ (toS . Base16.encode . toS . Crypto.hash . toS . (++ tk))
             <$> getHostName
           let dispatch' a = dispatch a & basename %~ (<> "_" <> hn)
-          fo <- liftIO $ hdfsFanOut rc
-          -- register $ liftIO $ fanCloseAll fo
+          fo <- liftIO $ hdfsFanOut rc tmp
+          register $ liftIO $ fanCloseAll fo
           sinkFanOut dispatch' conv fo
           stats <- liftIO $ fanStats fo
           (forM_ (M.toList stats) $ \ (fp, cnt) -> yield (map B.pack [fp, (show cnt)]))
@@ -637,7 +640,7 @@ orchIO :: IO a -> Controller ()
 orchIO = Controller . singleton . OrchIO
 
 
--- | Perform an IO action to obtain value, then cache it on HDFS and
+-- | Perform an IO action in orchestrator to obtain value, then cache it on HDFS and
 -- magically make it available to nodes during their runtime.
 runOnce :: Serialize a => IO a -> Controller a
 runOnce = Controller . singleton . RunOnce
@@ -660,7 +663,11 @@ newMRKey = do
 -------------------------------------------------------------------------------
 -- | Grab list of files in destination, write into a file, put file on
 -- HDFS so it is shared and return the (local, hdfs) paths.
-setupBinaryDir :: RunContext -> FilePath -> (FilePath -> Bool) -> IO (LocalFile, FilePath)
+setupBinaryDir
+    :: RunContext
+    -> FilePath
+    -> (FilePath -> Bool)
+    -> IO (LocalFile, FilePath)
 setupBinaryDir settings loc chk = do
     localFile <- randomLocalFile
     hdfsFile <- randomRemoteFile settings
