@@ -109,6 +109,15 @@ getDirectoryContents' fp = do
       True -> getDirectoryContents fp
 
 
+-------------------------------------------------------------------------------
+-- | Recursive contents if given a directory, assumed glob pattern if not.
+getInputFiles :: FilePath -> IO [FilePath]
+getInputFiles fp = do
+    chk <- doesDirectoryExist fp
+    case chk of
+      True -> glob (fp </> "**")
+      False -> glob fp
+
 
 -------------------------------------------------------------------------------
 localMapReduce
@@ -124,7 +133,7 @@ localMapReduce lrs mrKey token H.HadoopRunOpts{..} = do
 
 
     expandedInput <- liftIO $ liftM concat $ forM _mrsInput $ \ inp ->
-      withLocalFile lrs (LocalFile inp) glob
+      withLocalFile lrs (LocalFile inp) getInputFiles
 
 
     let enableCompress = case _mrsCompress of
