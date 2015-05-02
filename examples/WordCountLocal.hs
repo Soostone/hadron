@@ -11,11 +11,11 @@ import           Control.Category
 import           Control.Lens
 import           Control.Monad
 import qualified Data.ByteString.Char8 as B
+import qualified Data.Conduit          as C
+import qualified Data.Conduit.List     as C
 import           Data.CSV.Conduit
 import           Data.Default
-import           Hadron.Streams
 import           Prelude               hiding (id, (.))
-import qualified System.IO.Streams     as S
 -------------------------------------------------------------------------------
 import           Hadron.Controller
 -------------------------------------------------------------------------------
@@ -46,16 +46,13 @@ mr1 = MapReduce def pSerialize mapper' Nothing (Left reducer')
 
 -------------------------------------------------------------------------------
 mapper':: Mapper (Row B.ByteString) B.ByteString Int
-mapper' is os = bindStream is go >>= S.connectTo os
-  where
-    go ln = S.fromList $
-            concatMap (map (\w -> (w, 1 :: Int)) . B.words) ln
+mapper' = C.concatMap (map (\w -> (w, 1 :: Int)) . concatMap B.words)
 
 
 reducer' :: Reducer B.ByteString Int (Row B.ByteString)
-reducer' is os = do
-  (!w, !cnt) <- S.fold (\ (_, !cnt) (k, !x) -> (k, cnt + x)) ("", 0) is
-  S.write (Just [w, B.pack . show $ cnt]) os
+reducer'  = do
+  (!w, !cnt) <- C.fold (\ (_, !cnt) (k, !x) -> (k, cnt + x)) ("", 0)
+  C.yield [w, B.pack . show $ cnt]
 
 
 -------------------------------------------------------------------------------
@@ -64,14 +61,12 @@ mr2 :: MapReduce (Row B.ByteString) (Row B.ByteString)
 mr2 = MapReduce def pSerialize m Nothing (Left r)
     where
       m :: Mapper (Row B.ByteString) String Int
-      m is os = do
-        is' <- S.map (const $ ("count", 1)) is
-        S.connect is' os
+      m = C.map (const $ ("count", 1))
 
       r :: Reducer (String) Int (Row B.ByteString)
-      r is os = do
-          cnt <- S.fold (\ !m (_, !i) -> m + i) 0 is
-          S.write (Just ["Total Count", (B.pack . show) cnt]) os
+      r = do
+          cnt <- C.fold (\ !m (_, !i) -> m + i) 0
+          C.yield ["Total Count", (B.pack . show) cnt]
 
 
 mr3 :: MapReduce (Row B.ByteString) (Row B.ByteString)
@@ -79,11 +74,9 @@ mr3 = MapReduce opts pSerialize m Nothing r
   where
     opts = def & mroNumReduce .~ Just 0
 
-    m is os = do
-      is' <- S.map (\ v -> ((), map (B.take 5) v) ) is
-      S.connect is' os
+    m = C.map (\ v -> ((), map (B.take 5) v) )
 
-    r = Right (S.contramap id)
+    r = Right (C.map id)
 
 
 
