@@ -61,7 +61,7 @@ module Hadron.Controller
 
     -- * Data Sources
     , Tap (..)
-    , proto, location
+    , tapProto, tapLocation
     , tap
     , taps
     , mergeTaps
@@ -170,12 +170,12 @@ import           Hadron.Utils
 
 
 -------------------------------------------------------------------------------
-echo :: (Applicative m, MonadIO m) => Severity -> LogStr -> m ()
-echo sev msg = runLog $ logMsg "Run.Hadoop" sev msg
+echo :: (Applicative m, MonadIO m, LogItem a) => Severity ->a -> LogStr -> m ()
+echo sev cxt msg = runLog $ logF cxt "Run.Hadoop" sev msg
 
 
 -------------------------------------------------------------------------------
-echoInfo :: (Applicative m, MonadIO m) => LogStr -> m ()
+echoInfo :: (Applicative m, MonadIO m, LogItem a) => a -> LogStr -> m ()
 echoInfo = echo InfoS
 
 
@@ -328,15 +328,15 @@ mrOptions f (MapReduce o p m c r) = (\ o' -> MapReduce o' p m c r) <$> f o
 --
 -- > customers = 'tap' "s3n://my-bucket/customers" (csvProtocol def)
 data Tap a = Tap
-    { _location :: [FilePath]
-    , _proto    :: Protocol' a
+    { _tapLocation :: [FilePath]
+    , _tapProto    :: Protocol' a
     }
 makeLenses ''Tap
 
 
 -- | If two 'location's are the same, we consider two Taps equal.
 instance Eq (Tap a) where
-    a == b = _location a == _location b
+    a == b = _tapLocation a == _tapLocation b
 
 
 -- | Construct a 'DataDef'
@@ -352,7 +352,7 @@ taps fp p = Tap fp p
 belongsToTap :: Tap a -> FilePath -> Bool
 belongsToTap t fn = any (`isInfixOf` fn) stem
     where
-      stem = map (takeWhile (/= '*')) (t ^. location)
+      stem = map (takeWhile (/= '*')) (t ^. tapLocation)
 
 
 
@@ -360,16 +360,16 @@ belongsToTap t fn = any (`isInfixOf` fn) stem
 concatTaps :: [Tap a] -> Tap a
 concatTaps ts = Tap locs newP
     where
-      locs = concatMap _location ts
+      locs = concatMap _tapLocation ts
       newP = Protocol enc dec
 
       dec = do
           fn <- liftIO $ getFileName
           case find (flip belongsToTap fn) ts of
             Nothing -> error "Unexpected: Can't determine tap in concatTaps."
-            Just t -> t ^. (proto . protoDec)
+            Just t -> t ^. (tapProto . protoDec)
 
-      enc = head ts ^. proto . protoEnc
+      enc = head ts ^. tapProto . protoEnc
 
 
 -------------------------------------------------------------------------------
@@ -378,13 +378,13 @@ concatTaps ts = Tap locs newP
 -- you'll fill up your memory.
 readTap :: RunContext -> Tap a -> IO [a]
 readTap rc t = do
-    fs <- concat <$> forM (_location t) (hdfsLs rc)
+    fs <- concat <$> forM (_tapLocation t) (hdfsLs rc)
     let chk fp = not (elem (fp ^. filePath . filename) [".", ".."]) &&
                  (fp ^. fileSize) > 0
     let fs' = filter chk fs
     runResourceT $
       inp (map _filePath fs')
-        =$= (t ^. proto . protoDec)
+        =$= (t ^. tapProto . protoDec)
         $$ C.consume
     where
 
@@ -416,18 +416,18 @@ readTap rc t = do
 -- therefore fail to work properly on self joins where the same data
 -- location is used in both taps.
 mergeTaps :: Tap a -> Tap b -> Tap (Either a b)
-mergeTaps ta tb = Tap (_location ta ++ _location tb) newP
+mergeTaps ta tb = Tap (_tapLocation ta ++ _tapLocation tb) newP
     where
       newP = Protocol enc dec
 
       dec = do
           fn <- liftIO getFileName
           if belongsToTap ta fn
-            then (ta ^. proto . protoDec) =$= C.map Left
-            else (tb ^. proto . protoDec) =$= C.map Right
+            then (ta ^. tapProto . protoDec) =$= C.map Left
+            else (tb ^. tapProto . protoDec) =$= C.map Right
 
-      as = ta ^. (proto . protoEnc)
-      bs = tb ^. (proto . protoEnc)
+      as = ta ^. (tapProto . protoEnc)
+      bs = tb ^. (tapProto . protoEnc)
 
       enc = awaitForever $ \ res ->
         case res of
@@ -718,7 +718,7 @@ orchestrate (Controller p) settings rr s = do
     bracket
       (liftIO $ openFile "hadron.log" AppendMode)
       (liftIO . hClose)
-      (\ h -> do echoInfo  "Initiating orchestration..."
+      (\ h -> do echoInfo ()  "Initiating orchestration..."
                  evalStateT (runEitherT (go p)) s)
     where
       go = eval . O.view
@@ -781,29 +781,30 @@ orchestrate (Controller p) settings rr s = do
             go' = do
                 mrKey <- newMRKey
 
-                echoInfo $ ls $
-                  "Launching MR job " ++ show mrKey ++ maybe "" (": " ++) nm
+                let info = sl "Key" mrKey <> sl "Name" nm
 
-                chk <- liftIO $ mapM (hdfsFileExists settings) (_location outp)
+                echoInfo info "Launching MR job"
+
+                chk <- liftIO $ mapM (hdfsFileExists settings) (_tapLocation outp)
                 case any id chk of
                   False -> do
-                      echoInfo "Destination file does not exist. Proceeding."
+                      echoInfo info "Destination file does not exist. Proceeding."
                       go'' mrKey
                   True ->
                     case rr of
-                      RSFail -> echo ErrorS $ ls $
-                        "Destination exists: " <> head (_location outp)
-                      RSSkip -> echoInfo $
+                      RSFail -> echo ErrorS info $ ls $
+                        "Destination exists: " <> head (_tapLocation outp)
+                      RSSkip -> echoInfo info $
                         "Destination exists. Skipping " <>
-                        ls (intercalate ", " (_location outp))
+                        ls (intercalate ", " (_tapLocation outp))
                       RSReRun -> do
-                        echoInfo $ ls $
+                        echoInfo info $ ls $
                           "Destination file exists, will delete and rerun: " <>
-                          head (_location outp)
-                        _ <- liftIO $ mapM_ (hdfsDeletePath settings) (_location outp)
+                          head (_tapLocation outp)
+                        _ <- liftIO $ mapM_ (hdfsDeletePath settings) (_tapLocation outp)
                         go'' mrKey
 
-                        echoInfo $ ls $ "MR job complete: " ++ show mrKey
+                        echoInfo info "MR job complete"
 
 
             go'' mrKey = do
@@ -826,8 +827,8 @@ orchestrate (Controller p) settings rr s = do
 
               let mrs = mrOptsToRunOpts mro
               launchMapReduce settings mrKey runToken $ mrs
-                & mrsInput .~ concatMap _location inp
-                & mrsOutput .~ head (_location outp)
+                & mrsInput .~ concatMap _tapLocation inp
+                & mrsOutput .~ head (_tapLocation outp)
                 & mrsJobName .~ nm
                 & (if onlyMap then mrsNumReduce .~ Just 0 else id)
 
@@ -1014,10 +1015,10 @@ workNode settings (Controller p) runToken arg = do
                   fn <- getFileName
                   let t = find (flip belongsToTap fn) inp
                   return $ case t of
-                    Nothing -> head inp ^. proto . protoDec
-                    Just t' -> t' ^. proto . protoDec
+                    Nothing -> head inp ^. tapProto . protoDec
+                    Just t' -> t' ^. tapProto . protoDec
 
-          let enc = outp ^. proto . protoEnc
+          let enc = outp ^. tapProto . protoEnc
 
               mp' = case rd of
                 Left _ -> mapRegular
@@ -1114,10 +1115,10 @@ joinStep fs = MapReduce mro pSerialize mp Nothing (Left rd)
       mro = joinOpts { _mroPart = Partition (n+1) n }
 
       locations :: [FilePath]
-      locations = concatMap (view (_1 . location)) fs
+      locations = concatMap (view (_1 . tapLocation)) fs
 
       taps' :: [Tap a]
-      taps' = concatMap ((\t -> replicate (length (_location t)) t) . view _1) fs
+      taps' = concatMap ((\t -> replicate (length (_tapLocation t)) t) . view _1) fs
 
       locations' = map B.pack locations
 
@@ -1132,7 +1133,7 @@ joinStep fs = MapReduce mro pSerialize mp Nothing (Left rd)
       tapIx = M.fromList $ zip (map snd dataSets) taps'
 
       getTapDS :: Tap a -> [DataSet]
-      getTapDS t = mapMaybe (flip M.lookup dsIx) (_location t)
+      getTapDS t = mapMaybe (flip M.lookup dsIx) (_tapLocation t)
 
 
       fs' :: [(DataSet, JoinType)]
