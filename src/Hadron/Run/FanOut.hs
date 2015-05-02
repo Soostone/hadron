@@ -1,7 +1,8 @@
-{-# LANGUAGE BangPatterns      #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RankNTypes        #-}
-{-# LANGUAGE TemplateHaskell   #-}
+{-# LANGUAGE BangPatterns              #-}
+{-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE OverloadedStrings         #-}
+{-# LANGUAGE RankNTypes                #-}
+{-# LANGUAGE TemplateHaskell           #-}
 
 -----------------------------------------------------------------------------
 -- |
@@ -20,6 +21,7 @@
 module Hadron.Run.FanOut
     ( FanOut
     , mkFanOut
+    , Writer (..), noopWriter
     , fanWrite
     , fanClose
     , fanCloseAll
@@ -40,9 +42,25 @@ import qualified Data.Map.Strict         as M
 import           System.IO
 -------------------------------------------------------------------------------
 
+
+-------------------------------------------------------------------------------
+-- | External data writer packed with a finalization action.
+data Writer = forall p. Writer {
+      writerObject :: p
+    , writerClose  :: p -> IO ()
+    }
+
+-------------------------------------------------------------------------------
+-- | Use when there's no external state associated with the Handle,
+-- such as when using 'openFile'.
+noopWriter :: Writer
+noopWriter = Writer () (const $ return ())
+
+
 -- | An open file handle
 data FileHandle = FileHandle {
       _fhHandle       :: Handle
+    , _fhWriter       :: Writer
     , _fhPath         :: FilePath
     , _fhCount        :: !Int
     , _fhPendingCount :: !Int
@@ -53,7 +71,7 @@ makeLenses ''FileHandle
 -- | Concurrent multi-output manager.
 data FanOut = FanOut {
       _fanFiles    :: MVar (M.Map FilePath FileHandle)
-    , _fanCreate   :: FilePath -> IO Handle
+    , _fanCreate   :: FilePath -> IO (Handle, Writer)
     , _fanFinalize :: FilePath -> IO ()
     }
 makeLenses ''FanOut
@@ -63,7 +81,7 @@ makeLenses ''FanOut
 -- | Make a new fanout manager that will use given process creator.
 -- Process is expected to pipe its stdin into the desired location.
 mkFanOut
-    :: (FilePath -> IO Handle)
+    :: (FilePath -> IO (Handle, Writer))
     -- ^ Open a handle for a given target path
     -> (FilePath -> IO ())
     -- ^ Finalize hook after handle for target path has been closed.
@@ -89,8 +107,8 @@ fanWrite fo fp bs = modifyMVar_ (fo ^. fanFiles) go
       return $! M.insert fp (fh & upFun . (fhCount %~ (+1))) m
 
     go !m = do
-      r <- (fo ^. fanCreate) fp
-      go $! M.insert fp (FileHandle r fp 0 0) m
+      (r, p) <- (fo ^. fanCreate) fp
+      go $! M.insert fp (FileHandle r p fp 0 0) m
 
 
 -------------------------------------------------------------------------------
@@ -98,6 +116,8 @@ closeHandle :: FanOut -> FileHandle -> IO ()
 closeHandle fo fh = do
     hFlush $ fh ^. fhHandle
     hClose $ fh ^. fhHandle
+    case fh ^. fhWriter of
+      Writer h fin -> fin h
     (fo ^. fanFinalize) (fh ^. fhPath)
 
 
@@ -147,7 +167,9 @@ sinkFanOut dispatch conv fo = C.foldM go 0
 -------------------------------------------------------------------------------
 test :: IO ()
 test = do
-    fo <- mkFanOut (\ fp -> openFile fp AppendMode) (const (return ()))
+    fo <- mkFanOut
+      (\ fp -> (,) <$> openFile fp AppendMode <*> pure noopWriter)
+      (const (return ()))
     fanWrite fo "test1" "foo"
     fanWrite fo "test1" "bar"
     fanWrite fo "test1" "tak"

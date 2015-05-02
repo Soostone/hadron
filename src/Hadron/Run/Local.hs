@@ -280,7 +280,11 @@ hdfsPut src dest = do
 
 -------------------------------------------------------------------------------
 -- | Create a new multiple output file manager.
-hdfsFanOut :: (MonadIO m, MonadReader LocalRunSettings m) => FilePath -> m FanOut
+hdfsFanOut
+    :: (MonadIO m, MonadReader LocalRunSettings m)
+    => FilePath
+    -- ^ Temporary file location.
+    -> m FanOut
 hdfsFanOut tmp = do
     env <- ask
     liftIO $ mkFanOut (mkHandle env) (fin env)
@@ -295,7 +299,8 @@ hdfsFanOut tmp = do
         echoInfo $ ls $ "FanOut: Opening temp file for target "
           ++ show (fp, fp')
         createDirectoryIfMissing True (fp' ^. directory)
-        openFile fp' AppendMode
+        h <- openFile fp' AppendMode
+        return (h, noopWriter)
 
       -- move temp file to its final destination
       fin env fp0 = do

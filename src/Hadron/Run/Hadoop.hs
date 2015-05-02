@@ -345,18 +345,21 @@ hdfsPut HadoopEnv{..} localPath hdfsPath = void $
 -------------------------------------------------------------------------------
 -- | Create a new multiple output file manager.
 hdfsFanOut :: HadoopEnv -> FilePath -> IO FanOut
-hdfsFanOut HadoopEnv{..} tmp = mkFanOut mkP fin
+hdfsFanOut env@HadoopEnv{..} tmp = mkFanOut mkP fin
     where
 
       mkTmp fp = tmp </> fp ^. filename
 
       mkP fp = do
-        (Just h, _, _, _) <- createProcess $ (proc _hsBin ["fs", "-put", "-", mkTmp fp])
+        (Just h, _, _, ph) <- createProcess $ (proc _hsBin ["fs", "-put", "-", mkTmp fp])
           { std_in = CreatePipe }
         hSetBuffering h LineBuffering
-        return h
+        let w = Writer ph (void . waitForProcess)
+        return (h, w)
 
-      fin fp = void $ rawSystem _hsBin ["fs", "-mv", mkTmp fp, fp]
+      fin fp = do
+        hdfsMkdir env (fp ^. directory)
+        void $ rawSystem _hsBin ["fs", "-mv", mkTmp fp, fp]
 
 
 -------------------------------------------------------------------------------
