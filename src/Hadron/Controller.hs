@@ -132,6 +132,7 @@ import qualified Crypto.Hash.MD5              as Crypto
 import qualified Data.ByteString.Base16       as Base16
 import qualified Data.ByteString.Char8        as B
 import           Data.ByteString.Search       as B
+import           Data.Char
 import           Data.Conduit                 hiding (connect)
 import           Data.Conduit.Binary          (sinkHandle, sourceHandle)
 import qualified Data.Conduit.List            as C
@@ -170,7 +171,7 @@ import           Hadron.Utils
 
 
 -------------------------------------------------------------------------------
-echo :: (Applicative m, MonadIO m, LogItem a) => Severity ->a -> LogStr -> m ()
+echo :: (Applicative m, MonadIO m, LogItem a) => Severity -> a -> LogStr -> m ()
 echo sev cxt msg = runLog $ logF cxt "Run.Hadoop" sev msg
 
 
@@ -505,8 +506,25 @@ fanOutTap rc loc tmp dispatch proto = tap loc (Protocol enc dec)
                C.sourceList [a] =$= (proto ^. protoEnc) $$ C.consume
 
 
+newtype AppLabel = AppLabel { unAppLabel :: T.Text }
+  deriving (Eq,Show,Read,Ord)
+
+
+-------------------------------------------------------------------------------
+mkAppLabel :: T.Text -> AppLabel
+mkAppLabel txt
+  | all chk (toS txt) = AppLabel txt
+  | otherwise = error "Application labels can only be lowercase alphanumeric characters"
+  where
+    chk c = all ($ c) [isLower, isAlphaNum, not . isSpace]
+
+instance IsString AppLabel where fromString = mkAppLabel . toS
+
+
+
 data ContState = ContState {
-      _csMRCount      :: ! Int
+      _csApp          :: AppLabel
+    , _csMRCount      :: ! Int
     -- ^ MR run count; one for each 'connect'.
     , _csMRVars       :: ! (M.Map String B.ByteString)
     -- ^ Arbitrary key-val store that's communicated to nodes.
@@ -523,11 +541,52 @@ data ContState = ContState {
     -- executing.
     }
 
-instance Default ContState where
-    def = ContState 0 M.empty 0 0 False
-
-
 makeLenses ''ContState
+
+
+instance Default ContState where
+    def = ContState (AppLabel "_") 0 M.empty 0 0 False
+
+
+-------------------------------------------------------------------------------
+-- | load controller varibles back up in worker nodes
+loadState
+    :: (MonadState ContState m, MonadIO m)
+    => RunContext
+    -> FilePath
+    -> m ()
+loadState settings runToken = do
+    fn <- hdfsTempFilePath settings runToken
+    tmp <- liftIO $ hdfsGet settings fn
+    (app, st) <- liftIO $ withLocalFile settings tmp $ \ local -> do
+      !st <- readFile local <&> read
+      -- removeFile local
+      return st
+    csMRVars %= M.union st
+    csApp .= app
+
+
+-------------------------------------------------------------------------------
+-- | Write state from orchestrator for later load by worker nodes
+writeState
+    :: (MonadIO m, MonadState ContState m)
+    => RunContext
+    -> FilePath
+    -> m ()
+writeState settings runToken  = do
+    remote <- hdfsTempFilePath settings runToken
+    let local = LocalFile runToken
+
+    st <- use csMRVars
+    app <- use csApp
+
+    withLocalFile settings local $ \ lfp ->
+      liftIO $ writeFile lfp (show (app, st))
+
+    -- put settings file into a file named after the
+    -- randomly generated token.
+    liftIO $ hdfsPut settings local remote
+
 
 
 
@@ -812,18 +871,8 @@ orchestrate (Controller p) settings rr s = do
               -- serialize current state to HDFS, to be read by
               -- individual mappers reducers of this step.
               runToken <- liftIO $ randomToken 64
-              remote <- hdfsTempFilePath settings runToken
-              let local = LocalFile runToken
 
-
-              st <- use csMRVars
-
-              withLocalFile settings local $ \ lfp ->
-                liftIO $ writeFile lfp (show st)
-
-              -- put settings file into a file named after the
-              -- randomly generated token.
-              liftIO $ hdfsPut settings local remote
+              writeState settings runToken
 
               let mrs = mrOptsToRunOpts mro
               launchMapReduce settings mrKey runToken $ mrs
@@ -895,23 +944,29 @@ instance AsNodeError SomeException where _NodeError = exception
 -- mapper/reducer executable when called with right arguments, though
 -- you don't have to worry about that.
 hadoopMain
-    :: forall m a. ( MonadThrow m, MonadMask m
-                   , MonadIO m, Functor m, Applicative m )
-    => Controller a
-    -- ^ The Hadoop streaming application to run.
+    :: ( MonadThrow m, MonadMask m
+       , MonadIO m, Functor m, Applicative m )
+    => [(AppLabel, Controller ())]
+    -- ^ Hadoop streaming applications that can be run. First element
+    -- of tuple is used to lookup the right application to run from
+    -- the command line.
     -> RunContext
     -- ^ Hadoop environment info.
     -> RerunStrategy
     -- ^ What to do if destination files already exist.
     -> m ()
-hadoopMain cont settings rr = do
+hadoopMain conts settings rr = do
     args <- liftIO getArgs
     case args of
-      [] -> do
-        res <- orchestrate cont settings rr def
-        liftIO $ either print (const $ putStrLn "Success.") res
-      [runToken, arg] -> void $ workNode settings cont runToken arg
-      _ -> error "Usage: No arguments for job control or a phase name."
+      [nm] -> do
+        let nm' = mkAppLabel (toS nm)
+        case lookup nm' conts of
+          Nothing -> error (show nm <> " is not a known MapReduce application")
+          Just cont -> do
+            res <- orchestrate cont settings rr (def { _csApp = nm' })
+            echoInfo () ("Completed MR application " <> ls nm)
+      [runToken, arg] -> workNode settings conts runToken arg
+      _ -> error "You must provide the name of the MR application to initiate orchestration."
 
 
 
@@ -923,22 +978,6 @@ mkArgs mrKey = [ (Map, "mapper_" ++ mrKey)
                , (Combine, "combiner_" ++ mrKey) ]
 
 
--------------------------------------------------------------------------------
--- | load controller varibles back up
-loadState
-    :: (MonadState ContState m, MonadIO m)
-    => RunContext
-    -> FilePath
-    -> m ()
-loadState settings runToken = do
-    fn <- hdfsTempFilePath settings runToken
-    tmp <- liftIO $ hdfsGet settings fn
-    st <- liftIO $ withLocalFile settings tmp $ \ local -> do
-      !st <- readFile local <&> read
-      -- removeFile local
-      return st
-    csMRVars %= M.union st
-
 
 -------------------------------------------------------------------------------
 -- | Interpret the Controller in the context of a Hadoop worker node.
@@ -947,15 +986,18 @@ loadState settings runToken = do
 workNode
     :: forall m a. (MonadIO m, MonadThrow m, MonadMask m, Functor m)
     => RunContext
-    -> Controller a
+    -> [(AppLabel, Controller ())]
     -> String
     -> String
     -> m ()
-workNode settings (Controller p) runToken arg = do
+workNode settings conts runToken arg = do
     handling (exception._NodeRunComplete) (const $ return ()) $ do
       void $ flip evalStateT def $ do
         loadState settings runToken
-        interpretWithMonad go' p
+        l <- use csApp
+        case lookup l conts of
+          Nothing -> error ("App not found in worker node: " <> show l)
+          Just (Controller p) -> interpretWithMonad go' p
   where
 
       -- A short-circuiting wrapper for go. We hijack the exception
