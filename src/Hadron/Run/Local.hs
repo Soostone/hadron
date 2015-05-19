@@ -305,20 +305,16 @@ hdfsFanOut tmp = do
       -- complete without failure
       mkHandle env fp = do
         fp' <- runLocal env $ path (LocalFile (mkTmp fp))
-        echoInfo $ ls $ "FanOut: Opening temp file for target "
-          ++ show (fp, fp')
         createDirectoryIfMissing True (fp' ^. directory)
         h <- openFile fp' AppendMode
         return (h, noopWriter)
 
       -- move temp file to its final destination
       fin env fp0 = do
-        fp <- runLocal env $ path (LocalFile fp0)
-        fp' <- runLocal env $ path (LocalFile (mkTmp fp))
-        echoInfo $ ls $ "FanOut: Moving temp file to original destination "
-          ++ show (fp, fp')
-        createDirectoryIfMissing True (fp ^. directory)
-        renameFile fp' fp
+        temp <- runLocal env $ path (LocalFile (mkTmp fp0))
+        dest <- runLocal env $ path (LocalFile fp0)
+        createDirectoryIfMissing True (dest ^. directory)
+        renameFile temp dest
 
 
 -------------------------------------------------------------------------------
