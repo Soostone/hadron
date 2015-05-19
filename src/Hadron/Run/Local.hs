@@ -299,7 +299,7 @@ hdfsFanOut tmp = do
     liftIO $ mkFanOut (mkHandle env) (fin env)
   where
 
-      mkTmp fp = tmp </> fp ^. filename
+      mkTmp fp = tmp </> fp
 
       -- write into a temp file loc until we know the stage is
       -- complete without failure
