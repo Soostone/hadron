@@ -25,9 +25,9 @@ runLog m = liftIO (readIORef _ioLogger) >>= flip runKatipT m
 _ioLogger :: IORef LogEnv
 _ioLogger = unsafePerformIO $ do
   le <- initLogEnv "hadron" "-"
-  hSetBuffering stdout LineBuffering
-  s <- mkHandleScribe ColorIfTerminal stdout InfoS V3
-  newIORef $ registerScribe "stdout" s le
+  hSetBuffering stderr LineBuffering
+  s <- mkHandleScribe ColorIfTerminal stderr InfoS V3
+  newIORef $ registerScribe "stderr" s le
 {-# NOINLINE _ioLogger #-}
 
 
