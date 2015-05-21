@@ -25,7 +25,10 @@ module Hadron.Run.FanOut
     , fanWrite
     , fanClose
     , fanCloseAll
+
+    , FanOutSink
     , sinkFanOut
+    , sequentialSinkFanout
     , fanStats
     ) where
 
@@ -33,11 +36,12 @@ module Hadron.Run.FanOut
 import           Control.Applicative
 import           Control.Concurrent.MVar
 import           Control.Lens
-import           Control.Monad
+import           Control.Monad           (liftM, when)
 import           Control.Monad.Trans
 import qualified Data.ByteString.Char8   as B
 import           Data.Conduit
 import qualified Data.Conduit.List       as C
+import           Data.Foldable
 import qualified Data.Map.Strict         as M
 import           System.IO
 -------------------------------------------------------------------------------
@@ -150,18 +154,29 @@ fanStats fo = do
 
 -------------------------------------------------------------------------------
 -- | Sink a stream into 'FanOut'.
-sinkFanOut
-    :: MonadIO m
-    => (a -> FilePath)
-    -> (a -> m B.ByteString)
-    -> FanOut
-    -> Consumer a m Int
+sinkFanOut :: FanOutSink
 sinkFanOut dispatch conv fo = C.foldM go 0
     where
       go !i a = do
           bs <- conv a
           liftIO (fanWrite fo (dispatch a) bs)
           return $! i + 1
+
+
+-------------------------------------------------------------------------------
+sequentialSinkFanout :: FanOutSink
+sequentialSinkFanout dispatch conv fo =
+    liftM fst $ C.foldM go (0, Nothing)
+    where
+      go (!i, !fp0) a = do
+          bs <- conv a
+          let fp = dispatch a
+          liftIO $ for_ fp0 $ \ fp0' -> when (fp0' /= fp) (fanClose fo fp0')
+          liftIO $ fanWrite fo fp bs
+          return $! (i + 1, Just fp)
+
+
+type FanOutSink = MonadIO m => (a -> FilePath) -> (a -> m B.ByteString) -> FanOut -> Consumer a m Int
 
 
 -------------------------------------------------------------------------------

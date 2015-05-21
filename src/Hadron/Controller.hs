@@ -69,7 +69,7 @@ module Hadron.Controller
     , binaryDirTap
     , setupBinaryDir
     , fileListTap
-    , fanOutTap
+    , fanOutTap, sinkFanOut, sequentialSinkFanout
     , readTap
     , readHdfsFile
 
@@ -486,8 +486,10 @@ fanOutTap
     -- here (even though it's more than we need) so that the output is
     -- compatible with various ways of reading input in this
     -- framework.
+    -> FanOutSink
+    -- ^ How to sink the fanout, exposed here for flexibility.
     -> Tap a
-fanOutTap rc loc tmp dispatch proto = tap loc (Protocol enc dec)
+fanOutTap rc loc tmp dispatch proto sink = tap loc (Protocol enc dec)
     where
       dec = error "fanOutTap can't be used to read input."
       enc = do
@@ -497,7 +499,7 @@ fanOutTap rc loc tmp dispatch proto = tap loc (Protocol enc dec)
           let dispatch' a = dispatch a & basename %~ (<> "_" <> hn)
           fo <- liftIO $ hdfsFanOut rc tmp
           register $ liftIO $ fanCloseAll fo
-          sinkFanOut dispatch' conv fo
+          sink dispatch' conv fo
           stats <- liftIO $ fanStats fo
           (forM_ (M.toList stats) $ \ (fp, cnt) -> yield (map B.pack [fp, (show cnt)]))
             =$= fromCSV def
