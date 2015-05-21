@@ -99,7 +99,7 @@ fanWrite fo fp bs = modifyMVar_ (fo ^. fanFiles) go
     go !m | Just fh <- M.lookup fp m = do
       B.hPut (fh ^. fhHandle) bs
       let newCount = fh ^. fhPendingCount + B.length bs
-      upFun <- case (newCount >= 131072) of
+      upFun <- case (newCount >= 4096) of
         True -> do
           hFlush (fh ^. fhHandle)
           return $ fhPendingCount .~ 0
