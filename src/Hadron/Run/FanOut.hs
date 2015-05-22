@@ -2,6 +2,7 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE OverloadedStrings         #-}
 {-# LANGUAGE RankNTypes                #-}
+{-# LANGUAGE RecordWildCards           #-}
 {-# LANGUAGE TemplateHaskell           #-}
 
 -----------------------------------------------------------------------------
@@ -43,9 +44,11 @@ import           Data.Conduit
 import qualified Data.Conduit.List       as C
 import           Data.Foldable
 import qualified Data.Map.Strict         as M
+import           Data.Monoid
 import           System.IO
 -------------------------------------------------------------------------------
-
+import           Hadron.Utils
+-------------------------------------------------------------------------------
 
 -------------------------------------------------------------------------------
 -- | External data writer packed with a finalization action.
@@ -81,6 +84,15 @@ data FanOut = FanOut {
 makeLenses ''FanOut
 
 
+data FileChunk = FileChunk {
+      _chunkOrig   :: !FilePath
+    , _chunkTarget :: !FilePath
+    , _chunkCnt    :: !Int
+    }
+
+makeLenses ''FileChunk
+
+
 -------------------------------------------------------------------------------
 -- | Make a new fanout manager that will use given process creator.
 -- Process is expected to pipe its stdin into the desired location.
@@ -103,7 +115,7 @@ fanWrite fo fp bs = modifyMVar_ (fo ^. fanFiles) go
     go !m | Just fh <- M.lookup fp m = do
       B.hPut (fh ^. fhHandle) bs
       let newCount = fh ^. fhPendingCount + B.length bs
-      upFun <- case (newCount >= 4096) of
+      upFun <- case (newCount >= chunk) of
         True -> do
           hFlush (fh ^. fhHandle)
           return $ fhPendingCount .~ 0
@@ -114,6 +126,8 @@ fanWrite fo fp bs = modifyMVar_ (fo ^. fanFiles) go
       (r, p) <- (fo ^. fanCreate) fp
       go $! M.insert fp (FileHandle r p fp 0 0) m
 
+
+    chunk = 1024 * 4
 
 -------------------------------------------------------------------------------
 closeHandle :: FanOut -> FileHandle -> IO ()
@@ -168,12 +182,26 @@ sequentialSinkFanout :: FanOutSink
 sequentialSinkFanout dispatch conv fo =
     liftM fst $ C.foldM go (0, Nothing)
     where
-      go (!i, !fp0) a = do
+      go (!i, !chunk0) a = do
           bs <- conv a
           let fp = dispatch a
-          liftIO $ for_ fp0 $ \ fp0' -> when (fp0' /= fp) (fanClose fo fp0')
-          liftIO $ fanWrite fo fp bs
-          return $! (i + 1, Just fp)
+
+          let goNew = do
+                tk <- liftIO (randomToken 8)
+                let fp' = fp <> "_" <> tk
+                liftIO $ fanWrite fo fp' bs
+                return $! (i+1, Just (FileChunk fp fp' (B.length bs)))
+
+          case chunk0 of
+            Nothing -> goNew
+            Just c@FileChunk{..} -> case fp == _chunkOrig of
+              False -> do
+                liftIO $ fanClose fo _chunkTarget
+                goNew
+              True -> do
+                liftIO $ fanWrite fo _chunkTarget bs
+                return $! (i+1, Just $! c & chunkCnt %~ (+ (B.length bs)))
+
 
 
 type FanOutSink = MonadIO m => (a -> FilePath) -> (a -> m B.ByteString) -> FanOut -> Consumer a m Int

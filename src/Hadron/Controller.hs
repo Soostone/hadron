@@ -492,6 +492,7 @@ fanOutTap
 fanOutTap rc loc tmp dispatch proto sink = tap loc (Protocol enc dec)
     where
       dec = error "fanOutTap can't be used to read input."
+
       enc = do
           tk <- liftIO $ randomToken 64
           hn <- liftIO $ (toS . Base16.encode . toS . Crypto.hash . toS . (++ tk))
@@ -505,7 +506,9 @@ fanOutTap rc loc tmp dispatch proto sink = tap loc (Protocol enc dec)
             =$= fromCSV def
 
       conv a = liftM mconcat $
-               C.sourceList [a] =$= (proto ^. protoEnc) $$ C.consume
+               C.sourceList [a] =$=
+               (proto ^. protoEnc) $$
+               C.consume
 
 
 newtype AppLabel = AppLabel { unAppLabel :: T.Text }

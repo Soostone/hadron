@@ -44,6 +44,7 @@ module Hadron.Run.Hadoop
     , hdfsLs, parseLS
     , hdfsPut
     , hdfsFanOut
+    , hdfsFanOutStream
     , hdfsMkdir
     , tmpRoot
     , hdfsCat
@@ -59,15 +60,19 @@ import           Control.Error
 import           Control.Lens
 import           Control.Monad
 import           Control.Monad.Trans
-import           Data.ByteString.Char8       (ByteString)
-import qualified Data.ByteString.Char8       as B
+import           Control.Monad.Trans.Resource
+import           Crypto.Hash.MD5
+import           Data.ByteString.Char8        (ByteString)
+import qualified Data.ByteString.Char8        as B
 import           Data.Conduit
-import           Data.Conduit.Binary         (sourceHandle)
+import           Data.Conduit.Binary          (sourceHandle)
 import           Data.Default
 import           Data.List
 import           Data.List.LCS.HuntSzymanski
 import           Data.Monoid
-import qualified Data.Text                   as T
+import           Data.String.Conv
+import qualified Data.Text                    as T
+import           System.Directory
 import           System.Environment
 import           System.Exit
 import           System.FilePath
@@ -344,8 +349,8 @@ hdfsPut HadoopEnv{..} localPath hdfsPath = void $
 
 -------------------------------------------------------------------------------
 -- | Create a new multiple output file manager.
-hdfsFanOut :: HadoopEnv -> FilePath -> IO FanOut
-hdfsFanOut env@HadoopEnv{..} tmp = mkFanOut mkP fin
+hdfsFanOutStream :: HadoopEnv -> FilePath -> IO FanOut
+hdfsFanOutStream env@HadoopEnv{..} tmp = mkFanOut mkP fin
     where
 
       mkTmp fp = tmp </> fp ^. filename
@@ -360,6 +365,29 @@ hdfsFanOut env@HadoopEnv{..} tmp = mkFanOut mkP fin
       fin fp = do
         hdfsMkdir env (fp ^. directory)
         void $ rawSystem _hsBin ["fs", "-mv", mkTmp fp, fp]
+
+
+-------------------------------------------------------------------------------
+hdfsFanOut :: HadoopEnv -> FilePath -> IO FanOut
+hdfsFanOut env@HadoopEnv{..} tmp = mkFanOut mkHandle fin
+    where
+
+      mkTmp fp = tmp </> (toS . hash . toS $  fp)
+
+      -- write into a temp file loc until we know the stage is
+      -- complete without failure
+      mkHandle fp = do
+        let fp' = mkTmp fp
+        createDirectoryIfMissing True (fp' ^. directory)
+        h <- openFile fp' AppendMode
+        return (h, noopWriter)
+
+      -- move temp file to its final destination
+      fin fp = runResourceT $ do
+        let fp' = mkTmp fp
+        register $ removeFile fp'
+        liftIO $ hdfsPut env fp' fp
+
 
 
 -------------------------------------------------------------------------------
