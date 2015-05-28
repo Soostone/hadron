@@ -1,1 +1,23 @@
 language: haskell
+
+env:
+  matrix:
+    - GHC_VERSION=7.6.3  CABAL_VERSION=1.20
+    - GHC_VERSION=7.8.4  CABAL_VERSION=1.20
+    - GHC_VERSION=7.10.1 CABAL_VERSION=1.22
+
+before_install:
+  - sudo apt-add-repository -y ppa:hvr/ghc
+  - sudo apt-get update
+  - sudo apt-get install -y ghc-$GHC_VERSION cabal-install-$CABAL_VERSION
+  - export PATH=/opt/ghc/$GHC_VERSION/bin:/opt/cabal/$CABAL_VERSION/bin:$PATH
+
+install:
+  - cabal update
+  - cabal sandbox init
+  - cabal install --only-dependencies --enable-tests
+
+script:
+  - cabal configure --enable-tests
+  - cabal build
+  - cabal test
