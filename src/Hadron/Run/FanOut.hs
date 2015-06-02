@@ -22,7 +22,6 @@
 module Hadron.Run.FanOut
     ( FanOut
     , mkFanOut
-    , Writer (..), noopWriter
     , fanWrite
     , fanClose
     , fanCloseAll
@@ -37,38 +36,25 @@ module Hadron.Run.FanOut
 import           Control.Applicative
 import           Control.Concurrent.MVar
 import           Control.Lens
-import           Control.Monad           (liftM, when)
+import           Control.Monad
 import           Control.Monad.Trans
 import qualified Data.ByteString.Char8   as B
 import           Data.Conduit
 import qualified Data.Conduit.List       as C
-import           Data.Foldable
 import qualified Data.Map.Strict         as M
 import           Data.Monoid
+import           System.FilePath.Lens
 import           System.IO
 -------------------------------------------------------------------------------
 import           Hadron.Utils
 -------------------------------------------------------------------------------
 
--------------------------------------------------------------------------------
--- | External data writer packed with a finalization action.
-data Writer = forall p. Writer {
-      writerObject :: p
-    , writerClose  :: p -> IO ()
-    }
-
--------------------------------------------------------------------------------
--- | Use when there's no external state associated with the Handle,
--- such as when using 'openFile'.
-noopWriter :: Writer
-noopWriter = Writer () (const $ return ())
-
 
 -- | An open file handle
 data FileHandle = FileHandle {
-      _fhHandle       :: Handle
-    , _fhWriter       :: Writer
-    , _fhPath         :: FilePath
+      _fhHandle       :: !Handle
+    , _fhFin          :: IO ()
+    , _fhPath         :: !FilePath
     , _fhCount        :: !Int
     , _fhPendingCount :: !Int
     }
@@ -77,9 +63,8 @@ makeLenses ''FileHandle
 
 -- | Concurrent multi-output manager.
 data FanOut = FanOut {
-      _fanFiles    :: MVar (M.Map FilePath FileHandle)
-    , _fanCreate   :: FilePath -> IO (Handle, Writer)
-    , _fanFinalize :: FilePath -> IO ()
+      _fanFiles  :: MVar (M.Map FilePath FileHandle)
+    , _fanCreate :: FilePath -> IO (Handle, IO ())
     }
 makeLenses ''FanOut
 
@@ -97,12 +82,10 @@ makeLenses ''FileChunk
 -- | Make a new fanout manager that will use given process creator.
 -- Process is expected to pipe its stdin into the desired location.
 mkFanOut
-    :: (FilePath -> IO (Handle, Writer))
+    :: (FilePath -> IO (Handle, IO ()))
     -- ^ Open a handle for a given target path
-    -> (FilePath -> IO ())
-    -- ^ Finalize hook after handle for target path has been closed.
     -> IO FanOut
-mkFanOut f fin = FanOut <$> newMVar M.empty <*> pure f <*> pure fin
+mkFanOut f = FanOut <$> newMVar M.empty <*> pure f
 
 
 -------------------------------------------------------------------------------
@@ -130,13 +113,11 @@ fanWrite fo fp bs = modifyMVar_ (fo ^. fanFiles) go
     chunk = 1024 * 4
 
 -------------------------------------------------------------------------------
-closeHandle :: FanOut -> FileHandle -> IO ()
-closeHandle fo fh = do
+closeHandle :: FileHandle -> IO ()
+closeHandle fh = do
     hFlush $ fh ^. fhHandle
     hClose $ fh ^. fhHandle
-    case fh ^. fhWriter of
-      Writer h fin -> fin h
-    (fo ^. fanFinalize) (fh ^. fhPath)
+    fh ^. fhFin
 
 
 -------------------------------------------------------------------------------
@@ -145,7 +126,7 @@ fanClose :: FanOut -> FilePath -> IO ()
 fanClose fo fp = modifyMVar_ (fo ^. fanFiles) $ \ m -> case m ^. at fp of
   Nothing -> return m
   Just fh -> do
-      closeHandle fo fh
+      closeHandle fh
       return $! m & at fp .~ Nothing
 
 
@@ -154,7 +135,7 @@ fanClose fo fp = modifyMVar_ (fo ^. fanFiles) $ \ m -> case m ^. at fp of
 -- would spawn new processes to write into files.
 fanCloseAll :: FanOut -> IO ()
 fanCloseAll fo = modifyMVar_ (fo ^. fanFiles) $ \m -> do
-  forM_ (M.toList m) $ \ (_fp, fh) -> closeHandle fo fh
+  forM_ (M.toList m) $ \ (_fp, fh) -> closeHandle fh
   return M.empty
 
 
@@ -187,8 +168,8 @@ sequentialSinkFanout dispatch conv fo =
           let fp = dispatch a
 
           let goNew = do
-                tk <- liftIO (randomToken 8)
-                let fp' = fp <> "_" <> tk
+                tk <- liftIO (randomToken 16)
+                let fp' = fp & basename %~ (<> "_" <> tk)
                 liftIO $ fanWrite fo fp' bs
                 return $! (i+1, Just (FileChunk fp fp' (B.length bs)))
 
@@ -211,8 +192,7 @@ type FanOutSink = MonadIO m => (a -> FilePath) -> (a -> m B.ByteString) -> FanOu
 test :: IO ()
 test = do
     fo <- mkFanOut
-      (\ fp -> (,) <$> openFile fp AppendMode <*> pure noopWriter)
-      (const (return ()))
+      (\ fp -> (,) <$> openFile fp AppendMode <*> pure (return ()))
     fanWrite fo "test1" "foo"
     fanWrite fo "test1" "bar"
     fanWrite fo "test1" "tak"

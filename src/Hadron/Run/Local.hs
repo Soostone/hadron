@@ -296,7 +296,7 @@ hdfsFanOut
     -> m FanOut
 hdfsFanOut tmp = do
     env <- ask
-    liftIO $ mkFanOut (mkHandle env) (fin env)
+    liftIO $ mkFanOut (mkHandle env)
   where
 
       mkTmp fp = tmp </> fp
@@ -307,7 +307,7 @@ hdfsFanOut tmp = do
         fp' <- runLocal env $ path (LocalFile (mkTmp fp))
         createDirectoryIfMissing True (fp' ^. directory)
         h <- openFile fp' AppendMode
-        return (h, noopWriter)
+        return (h, fin env fp)
 
       -- move temp file to its final destination
       fin env fp0 = do

@@ -494,9 +494,7 @@ fanOutTap rc loc tmp dispatch proto sink = tap loc (Protocol enc dec)
       dec = error "fanOutTap can't be used to read input."
 
       enc = do
-          tk <- liftIO $ randomToken 64
-          hn <- liftIO $ (toS . Base16.encode . toS . Crypto.hash . toS . (++ tk))
-            <$> getHostName
+          hn <- liftIO mkUniqueHostToken
           let dispatch' a = dispatch a & basename %~ (<> "_" <> hn)
           fo <- liftIO $ hdfsFanOut rc tmp
           register $ liftIO $ fanCloseAll fo
@@ -509,6 +507,14 @@ fanOutTap rc loc tmp dispatch proto sink = tap loc (Protocol enc dec)
                C.sourceList [a] =$=
                (proto ^. protoEnc) $$
                C.consume
+
+
+-------------------------------------------------------------------------------
+mkUniqueHostToken :: IO String
+mkUniqueHostToken = do
+    tk <- randomToken 64
+    (toS . Base16.encode . toS . Crypto.hash . toS . (++ tk))
+      <$> getHostName
 
 
 newtype AppLabel = AppLabel { unAppLabel :: T.Text }

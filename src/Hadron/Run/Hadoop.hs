@@ -62,6 +62,7 @@ import           Control.Monad
 import           Control.Monad.Trans
 import           Control.Monad.Trans.Resource
 import           Crypto.Hash.MD5
+import qualified Data.ByteString.Base16       as Base16
 import           Data.ByteString.Char8        (ByteString)
 import qualified Data.ByteString.Char8        as B
 import           Data.Conduit
@@ -350,7 +351,7 @@ hdfsPut HadoopEnv{..} localPath hdfsPath = void $
 -------------------------------------------------------------------------------
 -- | Create a new multiple output file manager.
 hdfsFanOutStream :: HadoopEnv -> FilePath -> IO FanOut
-hdfsFanOutStream env@HadoopEnv{..} tmp = mkFanOut mkP fin
+hdfsFanOutStream env@HadoopEnv{..} tmp = mkFanOut mkP
     where
 
       mkTmp fp = tmp </> fp ^. filename
@@ -359,20 +360,18 @@ hdfsFanOutStream env@HadoopEnv{..} tmp = mkFanOut mkP fin
         (Just h, _, _, ph) <- createProcess $ (proc _hsBin ["fs", "-put", "-", mkTmp fp])
           { std_in = CreatePipe }
         hSetBuffering h LineBuffering
-        let w = Writer ph (void . waitForProcess)
-        return (h, w)
-
-      fin fp = do
-        hdfsMkdir env (fp ^. directory)
-        void $ rawSystem _hsBin ["fs", "-mv", mkTmp fp, fp]
+        let fin = do void $ waitForProcess ph
+                     hdfsMkdir env (fp ^. directory)
+                     void $ rawSystem _hsBin ["fs", "-mv", mkTmp fp, fp]
+        return (h, fin)
 
 
 -------------------------------------------------------------------------------
 hdfsFanOut :: HadoopEnv -> FilePath -> IO FanOut
-hdfsFanOut env@HadoopEnv{..} tmp = mkFanOut mkHandle fin
+hdfsFanOut env@HadoopEnv{..} tmp = mkFanOut mkHandle
     where
 
-      mkTmp fp = tmp </> (toS . hash . toS $  fp)
+      mkTmp fp = tmp </> (toS . Base16.encode . toS . hash . toS $ fp)
 
       -- write into a temp file loc until we know the stage is
       -- complete without failure
@@ -380,13 +379,15 @@ hdfsFanOut env@HadoopEnv{..} tmp = mkFanOut mkHandle fin
         let fp' = mkTmp fp
         createDirectoryIfMissing True (fp' ^. directory)
         h <- openFile fp' AppendMode
-        return (h, noopWriter)
+        return (h, fin fp)
 
       -- move temp file to its final destination
       fin fp = runResourceT $ do
         let fp' = mkTmp fp
-        register $ removeFile fp'
+        a <- register $ removeFile fp'
+        liftIO $ hdfsMkdir env (fp ^. directory)
         liftIO $ hdfsPut env fp' fp
+        release a
 
 
 
