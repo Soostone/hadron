@@ -481,15 +481,14 @@ fanOutTap
     -- ^ Decision dispatch of where each object should go. Make sure
     -- to provide fully qualified hdfs directory paths; a unique token
     -- will be appended to each file based on the node producing it.
-    -> Protocol' a
-    -- ^ How to serialize each object. We ask for a full 'Protocol'
-    -- here (even though it's more than we need) so that the output is
-    -- compatible with various ways of reading input in this
-    -- framework.
+    -> Conduit a (ResourceT IO) B.ByteString
+    -- ^ How to serialize each object. Make sure this conduit provides
+    -- for all the typical requirements: One record per line, no
+    -- newlines inside the record, etc.
     -> FanOutSink
     -- ^ How to sink the fanout, exposed here for flexibility.
     -> Tap a
-fanOutTap rc loc tmp dispatch proto sink = tap loc (Protocol enc dec)
+fanOutTap rc loc tmp dispatch encoder sink = tap loc (Protocol enc dec)
     where
       dec = error "fanOutTap can't be used to read input."
 
@@ -505,7 +504,7 @@ fanOutTap rc loc tmp dispatch proto sink = tap loc (Protocol enc dec)
 
       conv a = liftM mconcat $
                C.sourceList [a] =$=
-               (proto ^. protoEnc) $$
+               encoder $$
                C.consume
 
 
