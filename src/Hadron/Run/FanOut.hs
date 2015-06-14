@@ -159,6 +159,9 @@ sinkFanOut dispatch conv fo = C.foldM go 0
 
 
 -------------------------------------------------------------------------------
+-- | A fanout that keeps only a single file open at a time. Each time
+-- the target filename changes, this will close/finalize the file and
+-- start the new file.
 sequentialSinkFanout :: FanOutSink
 sequentialSinkFanout dispatch conv fo =
     liftM fst $ C.foldM go (0, Nothing)
