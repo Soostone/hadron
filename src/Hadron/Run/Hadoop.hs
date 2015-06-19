@@ -178,24 +178,29 @@ type MapReduceKey = String
 type RunToken = String
 
 
+-------------------------------------------------------------------------------
+-- | Useful reference for hadoop flags:
+--
+-- @http://hadoop.apache.org/docs/r2.4.1/hadoop-mapreduce-client/hadoop-mapreduce-client-core/mapred-default.xml@
 data HadoopRunOpts = HadoopRunOpts {
-      _mrsInput      :: [String]
-    , _mrsOutput     :: String
-    , _mrsPart       :: PartitionStrategy
-    , _mrsNumMap     :: Maybe Int
-    , _mrsNumReduce  :: Maybe Int
-    , _mrsCombine    :: Bool
-    , _mrsCompress   :: Maybe Codec
-    , _mrsOutSep     :: Maybe Char
+      _mrsInput       :: [String]
+    , _mrsOutput      :: String
+    , _mrsPart        :: PartitionStrategy
+    , _mrsNumMap      :: Maybe Int
+    , _mrsNumReduce   :: Maybe Int
+    , _mrsTaskTimeout :: Maybe Int
+    , _mrsCombine     :: Bool
+    , _mrsCompress    :: Maybe Codec
+    , _mrsOutSep      :: Maybe Char
     -- ^ A separator to be used in reduce output. It is sometimes
     -- useful to specify one to trick Hadoop.
-    , _mrsJobName    :: Maybe String
-    , _mrsComparator :: Comparator
+    , _mrsJobName     :: Maybe String
+    , _mrsComparator  :: Comparator
     }
 makeLenses ''HadoopRunOpts
 
 instance Default HadoopRunOpts where
-    def = HadoopRunOpts [] "" def Nothing Nothing False Nothing Nothing Nothing def
+    def = HadoopRunOpts [] "" def Nothing Nothing Nothing False Nothing Nothing Nothing def
 
 -- | A simple starting point to defining 'HadoopRunOpts'
 mrSettings
@@ -236,7 +241,7 @@ hadoopMapReduce HadoopEnv{..} mrKey runToken HadoopRunOpts{..} = do
     where
       mkArgs exec prog =
             [ "jar", _hsJar] ++
-            comp ++ numMap ++ numRed ++ outSep ++ jobName ++
+            comp ++ numMap ++ numRed ++ timeout ++ outSep ++ jobName ++
             comparator ++ part ++
             inputs ++
             [ "-output", _mrsOutput] ++
@@ -260,6 +265,8 @@ hadoopMapReduce HadoopEnv{..} mrKey runToken HadoopRunOpts{..} = do
 
       numMap = maybe [] (\x -> ["-D", "mapreduce.job.maps=" ++ show x]) _mrsNumMap
       numRed = maybe [] (\x -> ["-D", "mapreduce.job.reduces=" ++ show x]) _mrsNumReduce
+
+      timeout = maybe [] (\x -> ["-D", "mapreduce.task.timeout=" ++ show x]) _mrsTaskTimeout
 
       comp =
         case _mrsCompress of

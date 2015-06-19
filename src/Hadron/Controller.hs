@@ -84,6 +84,7 @@ module Hadron.Controller
     , mroNumReduce
     , mroCompress
     , mroOutSep
+    , mroTaskTimeout
     , PartitionStrategy (..)
     , Comparator (..)
     , RerunStrategy (..)

@@ -71,7 +71,11 @@ data MROptions = MROptions {
     , _mroNumMap      :: Maybe Int
     -- ^ Number of map tasks; 'Nothing' leaves it to Hadoop to decide.
     , _mroNumReduce   :: Maybe Int
-    -- ^ Number of reduce tasks; 'Nothing' leaves it to Hadoop to decide.
+    -- ^ Number of reduce tasks; 'Nothing' leaves it to Hadoop to
+    -- decide.
+    , _mroTaskTimeout :: Maybe Int
+    -- ^ Timeout in miliseconds for Hadoop tasks. Set to 0 to disable
+    -- the timeout.
     , _mroCompress    :: Maybe String
     -- ^ Whether to use compression on reduce output.
     , _mroOutSep      :: Maybe Char
@@ -93,7 +97,7 @@ makeLenses ''MROptions
 
 
 instance Default MROptions where
-    def = MROptions NoPartition RegularComp Nothing Nothing Nothing Nothing
+    def = MROptions NoPartition RegularComp Nothing Nothing Nothing Nothing Nothing
           ReduceErrorReThrow
 
 
@@ -105,5 +109,6 @@ mrOptsToRunOpts MROptions{..} = def { _mrsPart = _mroPart
                                     , _mrsNumReduce = _mroNumReduce
                                     , _mrsCompress = _mroCompress
                                     , _mrsOutSep = _mroOutSep
-                                    , _mrsComparator = _mroComparator }
+                                    , _mrsComparator = _mroComparator
+                                    , _mrsTaskTimeout = _mroTaskTimeout }
 
