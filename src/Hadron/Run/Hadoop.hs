@@ -297,9 +297,12 @@ hadoopMapReduce HadoopEnv{..} mrKey runToken HadoopRunOpts{..} = do
 
       outSep = case _mrsOutSep of
                  Nothing -> []
-                 Just sep -> [ "-D", "stream.reduce.output.field.separator=" ++ [sep]
-                             , "-D", "mapred.textoutputformat.separator=" ++ [sep]
-                             ]
+                 Just sep ->
+                   [ "-D", "stream.reduce.output.field.separator=" ++ [sep]
+                   , "-D", "mapred.textoutputformat.separator=" ++ [sep] ]
+                   ++ (if _mrsNumReduce == Just 0
+                       then [ "-D", "stream.map.output.field.separator=" ++ [sep]]
+                       else [])
 
 
 -------------------------------------------------------------------------------
