@@ -389,15 +389,12 @@ hdfsFanOut env@HadoopEnv{..} tmp = mkFanOut mkHandle
         let fp' = mkTmp fp
         createDirectoryIfMissing True (fp' ^. directory)
         h <- openFile fp' AppendMode
-        return (h, fin fp)
-
-      -- move temp file to its final destination
-      fin fp = runResourceT $ do
-        let fp' = mkTmp fp
-        a <- register $ removeFile fp'
-        liftIO $ hdfsMkdir env (fp ^. directory)
-        liftIO $ hdfsPut env fp' fp
-        release a
+        let fin = runResourceT $ do
+              a <- register $ removeFile fp'
+              liftIO $ hdfsMkdir env (fp ^. directory)
+              liftIO $ hdfsPut env fp' fp
+              release a
+        return (h, fin)
 
 
 
