@@ -440,13 +440,16 @@ mergeTaps ta tb = Tap (_tapLocation ta ++ _tapLocation tb) newP
 ------------------------------------------------------------------------------
 -- | Conduit that takes in hdfs filenames and outputs the file
 -- contents. Will unpack .gz files automatically.
-readHdfsFile :: RunContext -> Conduit B.ByteString (ResourceT IO) B.ByteString
+readHdfsFile
+    :: RunContext
+    -> Conduit B.ByteString (ResourceT IO) (FilePath, B.ByteString)
 readHdfsFile settings = awaitForever $ \s3Uri -> do
     let uriStr = B.unpack s3Uri
         getFile = hdfsLocalStream settings uriStr
-    if isSuffixOf "gz" uriStr
-      then getFile =$= ungzip
-      else getFile
+        outStream = if isSuffixOf "gz" uriStr
+                    then getFile =$= ungzip
+                    else getFile
+    outStream =$= C.map (\ s -> (uriStr, s))
 
 
 ------------------------------------------------------------------------------
@@ -459,7 +462,7 @@ fileListTap
     :: RunContext
     -> FilePath
     -- ^ A file containing a list of files to be used as input
-    -> Tap B.ByteString
+    -> Tap (FilePath, B.ByteString)
 fileListTap settings loc = tap loc (Protocol enc dec)
   where
     enc = error "You should never use a fileListTap as output!"
@@ -610,7 +613,10 @@ data ConI a where
 
     MakeTap :: Protocol' a -> ConI (Tap a)
 
-    BinaryDirTap :: FilePath -> (FilePath -> Bool) -> ConI (Tap B.ByteString)
+    BinaryDirTap
+        :: FilePath
+        -> (FilePath -> Bool)
+        -> ConI (Tap (FilePath, B.ByteString))
 
     ConIO :: IO a -> ConI a
     -- ^ General IO action; both orchestrator and nodes perform the action
@@ -694,7 +700,7 @@ binaryDirTap
     -- ^ A root location to list files under
     -> (FilePath -> Bool)
     -- ^ A filter condition to refine the listing
-    -> Controller (Tap B.ByteString)
+    -> Controller (Tap (FilePath, B.ByteString))
 binaryDirTap loc filt = Controller $ singleton $ BinaryDirTap loc filt
 
 
