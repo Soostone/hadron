@@ -1,1 +1,31 @@
-language: haskell
+# Use new container infrastructure to enable caching
+sudo: false
+
+  # Choose a lightweight base image; we provide our own build tools.
+language: c
+
+  # GHC depends on GMP. You can add other dependencies here as well.
+addons:
+  apt:
+    packages:
+    - libgmp-dev
+
+before_install:
+# Download and unpack the stack executable
+- mkdir -p ~/.local/bin
+- export PATH=$HOME/.local/bin:$PATH
+- travis_retry curl -L https://github.com/commercialhaskell/stack/releases/download/v0.1.6.0/stack-0.1.6.0-linux-x86_64.tar.gz | tar xz -C ~/.local/bin
+- cp ~/.local/bin/stack-0.1.6.0-linux-x86_64/stack ~/.local/bin/
+
+# This line does all of the work: installs GHC if necessary, build the library,
+# executables, and test suites, and runs the test suites. --no-terminal works
+# around some quirks in Travis's terminal implementation.
+script:
+- stack setup
+- stack build --no-terminal --install-ghc
+- stack test --coverage
+
+  # Caching so the next build will be fast too.
+cache:
+  directories:
+  - $HOME/.stack
