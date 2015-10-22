@@ -105,14 +105,14 @@ lset (HadoopRun _ s) = s
 
 -------------------------------------------------------------------------------
 launchMapReduce
-    :: MonadIO m
+    :: (Functor m, MonadIO m) 
     => RunContext
     -> String
     -> String
     -> H.HadoopRunOpts
-    -> EitherT String m ()
+    -> ExceptT String m () 
 launchMapReduce (LocalRun env) mrKey token opts =
-    EitherT . L.runLocal env . runEitherT $ (L.localMapReduce env mrKey token opts)
+    ExceptT . L.runLocal env . runExceptT $ (L.localMapReduce env mrKey token opts)
 launchMapReduce (HadoopRun env _) mrKey token opts =
     H.hadoopMapReduce env mrKey token opts
 

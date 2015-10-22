@@ -3,6 +3,7 @@
 {-# LANGUAGE RankNTypes            #-}
 {-# LANGUAGE RecordWildCards       #-}
 {-# LANGUAGE TemplateHaskell       #-}
+{-# LANGUAGE FlexibleContexts      #-}
 
 -----------------------------------------------------------------------------
 -- |
@@ -215,12 +216,12 @@ mrSettings ins out = def { _mrsInput = ins, _mrsOutput = out }
 
 -------------------------------------------------------------------------------
 hadoopMapReduce
-    :: (MonadIO m)
+    :: (Functor m, MonadIO m)
     => HadoopEnv
     -> MapReduceKey
     -> RunToken
     -> HadoopRunOpts
-    -> EitherT String m ()
+    -> ExceptT String m () 
 hadoopMapReduce HadoopEnv{..} mrKey runToken HadoopRunOpts{..} = do
     exec <- scriptIO getExecutablePath
     prog <- scriptIO getProgName
