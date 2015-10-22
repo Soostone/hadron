@@ -121,12 +121,12 @@ getInputFiles fp = do
 
 -------------------------------------------------------------------------------
 localMapReduce
-    :: MonadIO m
+    :: (Functor m, MonadIO m) 
     => LocalRunSettings
     -> String                   -- ^ MapReduceKey
     -> String                   -- ^ RunToken
     -> H.HadoopRunOpts
-    -> EitherT String m ()
+    -> ExceptT String m () 
 localMapReduce lrs mrKey token H.HadoopRunOpts{..} = do
     exPath <- scriptIO getExecutablePath
     echoInfo $ "Launching Hadoop job for MR key: " <> ls mrKey
@@ -230,7 +230,7 @@ echoInfo = echo InfoS
 
 -------------------------------------------------------------------------------
 -- | Fail if command not successful.
-clearExit :: MonadIO m => EitherT String m ExitCode -> EitherT [Char] m ()
+clearExit :: (Functor m, MonadIO m) => ExceptT String m ExitCode -> ExceptT [Char] m ()
 clearExit f = do
     res <- f
     case res of

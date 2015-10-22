@@ -155,7 +155,6 @@ import           Network.HostName
 import           System.Environment
 import           System.FilePath.Lens
 import           System.IO
-import           System.Locale
 import           Text.Parsec
 -------------------------------------------------------------------------------
 import           Hadron.Basic                 hiding (mapReduce)
@@ -527,7 +526,7 @@ newtype AppLabel = AppLabel { unAppLabel :: T.Text }
 -------------------------------------------------------------------------------
 mkAppLabel :: T.Text -> AppLabel
 mkAppLabel txt
-  | all chk (toS txt) = AppLabel txt
+  | all chk (toS txt :: String) = AppLabel txt
   | otherwise = error "Application labels can only be lowercase alphanumeric characters"
   where
     chk c = all ($ c) [isLower, isAlphaNum, not . isSpace]
@@ -784,7 +783,7 @@ pickIdWith l = do
 -------------------------------------------------------------------------------
 -- | Interpreter for the central job control process
 orchestrate
-    :: (MonadMask m, MonadIO m, Applicative m)
+    :: (Functor m, MonadMask m, MonadIO m, Applicative m)
     => Controller a
     -> RunContext
     -> RerunStrategy
@@ -795,14 +794,14 @@ orchestrate (Controller p) settings rr s = do
       (liftIO $ openFile "hadron.log" AppendMode)
       (liftIO . hClose)
       (\ h -> do echoInfo ()  "Initiating orchestration..."
-                 evalStateT (runEitherT (go p)) s)
+                 evalStateT (runExceptT (go p)) s)
     where
       go = eval . O.view
 
       eval (Return a) = return a
       eval (i :>>= f) = eval' i >>= go . f
 
-      eval' :: (MonadIO m) => ConI a -> EitherT String (StateT ContState m) a
+      eval' :: (Functor m, MonadIO m) => ConI a -> ExceptT String (StateT ContState m) a
 
       eval' (ConIO f) = liftIO f
 
