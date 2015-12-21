@@ -395,7 +395,7 @@ readTap rc t = do
 
       pullOne sem chan fp =
         bracket_ (waitQSem sem) (signalQSem sem) $
-        recoverAll policy $ do
+        recoverAll policy $ const $ do
           a <- runResourceT $ hdfsCat rc fp $$ C.consume
           writeChan chan (Just (B.concat a))
 

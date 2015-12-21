@@ -17,7 +17,7 @@ Flag Examples
 library
   hs-source-dirs:      src
 
-  exposed-modules:     
+  exposed-modules:
     Hadron.Basic
     Hadron.Conduit
     Hadron.Controller
@@ -31,7 +31,7 @@ library
     Hadron.Types
     Hadron.Utils
 
-  build-depends:       
+  build-depends:
                        BoundedChan                  >= 1.0 && < 1.2,
                        Glob                         >= 0.7 && < 0.8,
                        async                        >= 2.0 && < 2.1,
@@ -59,7 +59,7 @@ library
                        hslogger                     >= 1.2 && < 1.3,
                        katip,
                        lcs,
-                       lens                         >= 4.0 && < 4.10, 
+                       lens                         >= 4.0 && < 4.10,
                        mmorph,
                        mtl,
                        old-locale,
@@ -70,7 +70,7 @@ library
                        process,
                        random                       >= 1.0 && < 1.2,
                        resourcet,
-                       retry                        >= 0.5.1 && < 0.8,
+                       retry                        >= 0.7.0 && < 0.8,
                        safe,
                        safecopy                     >= 0.8 && < 0.9,
                        split,
@@ -81,17 +81,17 @@ library
                        time,
                        transformers-base,
                        unix,
-                       unix-time,                    
+                       unix-time,
                        unordered-containers,
                        vector,
                        zlib-conduit
 
-  ghc-options:         -Wall -O2 
+  ghc-options:         -Wall -O2
                        -fwarn-tabs
                        -fno-warn-unused-do-bind
   default-language:    Haskell2010
   ghc-prof-options:    -fprof-auto -fprof-cafs -fprof-auto-calls
-  
+
 
 executable local-example
 
@@ -136,8 +136,3 @@ test-suite test
 
 
   default-language:    Haskell2010
-
-
-
-
-
