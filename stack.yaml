@@ -1,0 +1,15 @@
+flags: {}
+packages:
+- location:
+    git: https://github.com/Soostone/katip.git
+    commit: c3592c9019b99813e9a25404bd290f677f2153ce
+  subdirs:
+  - katip
+- '.'
+extra-deps:
+- attoparsec-conduit-1.1.0
+- blaze-builder-conduit-1.1.0
+- lcs-0.2
+- string-conv-0.1
+- zlib-conduit-1.1.0
+resolver: lts-2.22
