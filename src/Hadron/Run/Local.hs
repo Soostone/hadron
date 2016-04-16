@@ -22,7 +22,6 @@
 module Hadron.Run.Local where
 
 -------------------------------------------------------------------------------
-import           Control.Applicative
 import           Control.Error
 import           Control.Lens
 import           Control.Monad.Reader
@@ -126,7 +125,7 @@ localMapReduce
     -> String                   -- ^ MapReduceKey
     -> String                   -- ^ RunToken
     -> H.HadoopRunOpts
-    -> EitherT String m ()
+    -> ExceptT String m ()
 localMapReduce lrs mrKey token H.HadoopRunOpts{..} = do
     exPath <- scriptIO getExecutablePath
     echoInfo $ "Launching Hadoop job for MR key: " <> ls mrKey
@@ -230,7 +229,7 @@ echoInfo = echo InfoS
 
 -------------------------------------------------------------------------------
 -- | Fail if command not successful.
-clearExit :: MonadIO m => EitherT String m ExitCode -> EitherT [Char] m ()
+clearExit :: MonadIO m => ExceptT String m ExitCode -> ExceptT [Char] m ()
 clearExit f = do
     res <- f
     case res of
@@ -363,5 +362,3 @@ withLocalFile
     -- ^ What to do with the absolute path.
     -> m b
 withLocalFile settings fp f = f =<< runLocal settings (path fp)
-
-

@@ -23,11 +23,11 @@ world of Hadoop Streaming MapReduce.
   (a-la inner) and optional (a-la outer) joins. Current shortcoming
   here is the loss of input typing; only Tap ByteString can be used on
   input in order to support multiple datasets.
-  
+
 * Various convenience combinators in the Controller module, covering
   common tasks.
-  
-  
+
+
 ## Shortcomings and Issues
 
 Hadoop seems to be terrible at constantly changing little details,
@@ -56,7 +56,7 @@ MapReduce step. Not recommended for direct use in most cases.
 ### Hadron.Controller
 
 High level module for automated orchestration of multi-stage MapReduce
-jobs. 
+jobs.
 
 (More docs and examples to be added)
 
@@ -87,5 +87,3 @@ See TODO.org.
 
 - runOnce combinator allows running an "IO a" action in the central
   node and having the same value appear on the remote (worker) nodes.
-
-

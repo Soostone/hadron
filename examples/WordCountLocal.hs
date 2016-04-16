@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns              #-}
+{-# LANGUAGE FlexibleContexts          #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE OverloadedStrings         #-}
 {-# LANGUAGE TupleSections             #-}
@@ -22,13 +23,15 @@ import           Hadron.Controller
 
 
 main :: IO ()
-main = hadoopMain app (LocalRun def) RSReRun
+main = hadoopMain [("app", app)] (LocalRun def) RSReRun
 
 
 -- notice how path is a file
-source = do
-    t <- binaryDirTap "data" (== "data/sample.csv")
-    return $ t & proto %~ (csvProtocol def . )
+--source = do
+--    t <- binaryDirTap "data" (== "data/sample.csv")
+--    return $ t & tapProto %~ (csvProtocol def . )
+
+source = tap "data/sample.csv" (csvProtocol def)
 
 
 -- notice how path is a folder
@@ -82,9 +85,8 @@ mr3 = MapReduce opts pSerialize m Nothing r
 
 app :: Controller ()
 app = do
-    src <- source
+    --src <- source
+    let src = source
     connect mr1 [src] target (Just "Counting word frequency")
     connect mr2 [target] wordCountTarget (Just "Counting words")
     connect mr3 [target] truncated (Just "Truncating all fields")
-
-

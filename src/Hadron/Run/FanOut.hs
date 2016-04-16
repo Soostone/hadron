@@ -33,7 +33,6 @@ module Hadron.Run.FanOut
     ) where
 
 -------------------------------------------------------------------------------
-import           Control.Applicative
 import           Control.Concurrent.MVar
 import           Control.Lens
 import           Control.Monad
@@ -188,7 +187,7 @@ sequentialSinkFanout dispatch conv fo =
 
 
 
-type FanOutSink = MonadIO m => (a -> FilePath) -> (a -> m B.ByteString) -> FanOut -> Consumer a m Int
+type FanOutSink = forall a m. MonadIO m => (a -> FilePath) -> (a -> m B.ByteString) -> FanOut -> Consumer a m Int
 
 
 -------------------------------------------------------------------------------
@@ -202,6 +201,3 @@ test = do
     print =<< fanStats fo
     fanCloseAll fo
     fanWrite fo "test1" "tak"
-
-
-

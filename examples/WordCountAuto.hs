@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns              #-}
+{-# LANGUAGE FlexibleContexts          #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE OverloadedStrings         #-}
 {-# LANGUAGE TupleSections             #-}
@@ -7,7 +8,7 @@ module Main where
 
 -------------------------------------------------------------------------------
 import qualified Data.ByteString.Char8       as B
-import           Data.Conduit
+import           Data.Conduit ((=$=), yield)
 import qualified Data.Conduit.List           as C
 import           Data.CSV.Conduit
 import           Data.Default
@@ -16,7 +17,7 @@ import           Hadron.Controller
 -------------------------------------------------------------------------------
 
 main :: IO ()
-main = hadoopMain app clouderaDemo RSReRun
+main = hadoopMain [("count", app)] (HadoopRun clouderaDemo def) RSReRun
 
 
 source = tap "hdfs://localhost/user/cloudera/full_meta_4.csv.gz" idProtocol
@@ -25,12 +26,13 @@ target = tap "hdfs://localhost/user/cloudera/wcOut1" (csvProtocol def)
 
 
 mr1 :: MapReduce B.ByteString (Row B.ByteString)
-mr1 = MapReduce def pSerialize mapper' reducer'
+mr1 = MapReduce def pSerialize mapper' Nothing (Left reducer')
 
 
-
+mapper' :: Mapper B.ByteString CompositeKey Int
 mapper' = intoCSV def =$= C.concatMap f
     where
+      f :: [B.ByteString] -> [([B.ByteString], Int)]
       f ln = concatMap (map (\w -> ([w], 1 :: Int)) . B.words) ln
 
 
@@ -40,7 +42,4 @@ reducer' = do
   yield $ [w, B.pack . show $ cnt]
 
 
-
 app = connect mr1 [source] target (Just "Counting words")
-
-

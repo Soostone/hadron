@@ -1,7 +1,7 @@
 {-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE OverloadedStrings         #-}
 {-# LANGUAGE ScopedTypeVariables       #-}
-{-| 
+{-|
 
 Use the Basic interface to create a simple mapreduce program.
 
@@ -28,6 +28,3 @@ mapper' = linesConduit =$= C.map (\_ -> (["cnt"], (1 :: Int)))
 reducer' = do
   i <- C.fold (\ acc (_, x) -> x + acc) 0
   yield $ B.pack $ show i
-
-
-

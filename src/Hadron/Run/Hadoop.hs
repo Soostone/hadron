@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE RankNTypes            #-}
@@ -55,7 +56,6 @@ module Hadron.Run.Hadoop
     ) where
 
 -------------------------------------------------------------------------------
-import           Control.Applicative
 import           Control.Error
 import           Control.Lens
 import           Control.Monad
@@ -220,7 +220,7 @@ hadoopMapReduce
     -> MapReduceKey
     -> RunToken
     -> HadoopRunOpts
-    -> EitherT String m ()
+    -> ExceptT String m ()
 hadoopMapReduce HadoopEnv{..} mrKey runToken HadoopRunOpts{..} = do
     exec <- scriptIO getExecutablePath
     prog <- scriptIO getProgName
@@ -237,6 +237,7 @@ hadoopMapReduce HadoopEnv{..} mrKey runToken HadoopRunOpts{..} = do
         echo ErrorS $ ls $ intercalate "\n"
           [ "Hadoop job failed.", "StdOut:"
           , out, "", "StdErr:", eout]
+
         hoistEither $ Left $ "MR job failed with: " ++ show e
     where
       mkArgs exec prog =
@@ -463,4 +464,3 @@ hdfsGet HadoopEnv{..} p local = do
 -------------------------------------------------------------------------------
 makeLenses ''HadoopEnv
 -------------------------------------------------------------------------------
-

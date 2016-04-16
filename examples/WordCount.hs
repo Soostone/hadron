@@ -27,6 +27,3 @@ reducer':: Reducer CompositeKey Int B.ByteString
 reducer' = do
   (w, cnt) <- C.fold (\ (_, cnt) ([k], x) -> (k, cnt + x)) ("", 0)
   yield $ B.concat [rowToStr def [w, B.pack . show $ cnt], "\n"]
-
-
-

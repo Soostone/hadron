@@ -1,0 +1,17 @@
+resolver: lts-5.12
+
+packages:
+- '.'
+- location: https://github.com/juanpaucar/lcs/archive/40cc3bc32b5cd96d78f224850ec2d4428051b8b1.zip
+
+extra-deps:
+- katip-0.1.1.0
+- string-conv-0.1
+
+# Override default flag values for local packages and extra-deps
+flags:
+  hadron:
+    Examples: True
+
+# Extra package databases containing global packages
+extra-package-dbs: []

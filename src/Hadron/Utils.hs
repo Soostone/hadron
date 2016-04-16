@@ -5,7 +5,6 @@ module Hadron.Utils where
 
 
 -------------------------------------------------------------------------------
-import           Control.Applicative
 import           Control.Lens
 import           Control.Monad
 import           Control.Monad.Trans
@@ -74,4 +73,3 @@ randomToken n = do
 -------------------------------------------------------------------------------
 (!?) :: [a] -> Int -> Maybe a
 (!?) = atMay
-

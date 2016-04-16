@@ -34,16 +34,14 @@ library
   build-depends:
                        BoundedChan                  >= 1.0 && < 1.2,
                        Glob                         >= 0.7 && < 0.8,
-                       async                        >= 2.0 && < 2.1,
-                       attoparsec                   >= 0.11 && < 0.13,
-                       attoparsec-conduit           >= 1.0 && < 1.2,
+                       async                        >= 2.0 && < 2.2,
+                       attoparsec                   >= 0.11 && < 0.14,
                        base                         >= 4.5 && < 5,
                        base16-bytestring            >= 0.1 && < 0.2,
                        base64-bytestring            >= 1 && < 1.1,
                        blaze-builder                >= 0.3 && < 0.5,
-                       blaze-builder-conduit        >= 1.1 && < 1.2,
                        bytestring                   >= 0.10 && < 0.11,
-                       cereal                       >= 0.4 && < 0.5,
+                       cereal                       >= 0.4 && < 0.6,
                        conduit                      >= 1.0 && < 1.3,
                        conduit-extra                >= 1.1 && < 1.2,
                        containers                   >= 0.5 && < 0.6,
@@ -51,7 +49,7 @@ library
                        csv-conduit                  >= 0.5.1 && < 0.7,
                        data-default                 >= 0.4 && < 0.6,
                        directory                    >= 1 && < 1.3,
-                       errors                       >= 1.3 && < 1.5,
+                       errors                       >= 2.0 && < 2.2,
                        exceptions                   >= 0.5 && < 0.9,
                        filepath                     >= 1 && < 1.5,
                        hashable                     >= 1.1 && < 1.3,
@@ -59,10 +57,9 @@ library
                        hslogger                     >= 1.2 && < 1.3,
                        katip,
                        lcs,
-                       lens                         >= 4.0 && < 4.10,
+                       lens                         >= 4.0 && < 4.14,
                        mmorph,
                        mtl,
-                       old-locale,
                        operational,
                        optparse-applicative,
                        parsec                       >= 3.1.5 && < 3.2,
@@ -72,46 +69,25 @@ library
                        resourcet,
                        retry                        >= 0.7.0 && < 0.8,
                        safe,
-                       safecopy                     >= 0.8 && < 0.9,
+                       safecopy                     >= 0.8 && < 0.10,
                        split,
                        string-conv                  >= 0.1 && < 0.2,
                        stringsearch,
                        template-haskell,
                        text,
                        time,
+                       transformers,
                        transformers-base,
                        unix,
                        unix-time,
                        unordered-containers,
-                       vector,
-                       zlib-conduit
+                       vector
 
   ghc-options:         -Wall -O2
                        -fwarn-tabs
                        -fno-warn-unused-do-bind
   default-language:    Haskell2010
   ghc-prof-options:    -fprof-auto -fprof-cafs -fprof-auto-calls
-
-
-executable local-example
-
-  if !flag(Examples)
-    Buildable: False
-  else
-    Buildable: True
-
-  main-is: WordCountLocal.hs
-  hs-source-dirs: examples
-  default-language:  Haskell2010
-
-  Build-depends: base >= 4 && < 5
-               , bytestring
-               , csv-conduit
-               , conduit
-               , hadron
-               , lens
-               , data-default
-
 
 
 test-suite test
@@ -136,3 +112,85 @@ test-suite test
 
 
   default-language:    Haskell2010
+
+
+executable line-count
+
+  if !flag(Examples)
+    Buildable: False
+  else
+    Buildable: True
+
+  main-is: LineCount.hs
+  hs-source-dirs: examples
+  default-language:  Haskell2010
+
+  Build-depends: base >= 4 && < 5
+               , bytestring
+               , csv-conduit
+               , conduit
+               , hadron
+               , lens
+               , data-default
+
+
+executable word-count
+
+  if !flag(Examples)
+    Buildable: False
+  else
+    Buildable: True
+
+  main-is: WordCount.hs
+  hs-source-dirs: examples
+  default-language:  Haskell2010
+
+  Build-depends: base >= 4 && < 5
+               , bytestring
+               , csv-conduit
+               , conduit
+               , hadron
+               , lens
+               , data-default
+
+
+executable word-count-auto
+
+  if !flag(Examples)
+    Buildable: False
+  else
+    Buildable: True
+
+  main-is: WordCountAuto.hs
+  hs-source-dirs: examples
+  default-language:  Haskell2010
+
+  Build-depends: base >= 4 && < 5
+               , bytestring
+               , csv-conduit
+               , conduit
+               , hadron
+               , lens
+               , data-default
+
+
+executable word-count-local
+
+  if !flag(Examples)
+    Buildable: False
+  else
+    Buildable: True
+
+  main-is: WordCountLocal.hs
+  hs-source-dirs: examples
+  default-language:  Haskell2010
+
+  Build-depends: base >= 4 && < 5
+               , bytestring
+               , csv-conduit
+               , conduit
+               , hadron
+               , lens
+               , data-default
+
+

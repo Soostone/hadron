@@ -155,7 +155,6 @@ import           Network.HostName
 import           System.Environment
 import           System.FilePath.Lens
 import           System.IO
-import           System.Locale
 import           Text.Parsec
 -------------------------------------------------------------------------------
 import           Hadron.Basic                 hiding (mapReduce)
@@ -257,9 +256,9 @@ utcFormat :: String
 utcFormat = "%Y-%m-%d %H:%M:%S.%q"
 
 instance MRKey UTCTime where
-    toCompKey = toCompKey . formatTime defaultTimeLocale utcFormat
+    toCompKey = toCompKey . formatTime Data.Time.defaultTimeLocale utcFormat
     keyParser = do
-        res <- parseTime defaultTimeLocale utcFormat <$> keyParser
+        res <- parseTime Data.Time.defaultTimeLocale utcFormat <$> keyParser
         maybe (fail "Can't parse value as UTCTime") return res
     numKeys _ = 1
 
@@ -527,7 +526,7 @@ newtype AppLabel = AppLabel { unAppLabel :: T.Text }
 -------------------------------------------------------------------------------
 mkAppLabel :: T.Text -> AppLabel
 mkAppLabel txt
-  | all chk (toS txt) = AppLabel txt
+  | T.all chk (toS txt) = AppLabel txt
   | otherwise = error "Application labels can only be lowercase alphanumeric characters"
   where
     chk c = all ($ c) [isLower, isAlphaNum, not . isSpace]
@@ -795,14 +794,14 @@ orchestrate (Controller p) settings rr s = do
       (liftIO $ openFile "hadron.log" AppendMode)
       (liftIO . hClose)
       (\ h -> do echoInfo ()  "Initiating orchestration..."
-                 evalStateT (runEitherT (go p)) s)
+                 evalStateT (runExceptT (go p)) s)
     where
       go = eval . O.view
 
       eval (Return a) = return a
       eval (i :>>= f) = eval' i >>= go . f
 
-      eval' :: (MonadIO m) => ConI a -> EitherT String (StateT ContState m) a
+      eval' :: (MonadIO m) => ConI a -> ExceptT String (StateT ContState m) a
 
       eval' (ConIO f) = liftIO f
 
@@ -1356,5 +1355,3 @@ joinMR mp = MapReduce mro pSerialize mp' Nothing (Left red)
               Just (_, Right b) -> do
                 mapM_ yield [mappend a b | a <- ls]
                 go ls
-
-
