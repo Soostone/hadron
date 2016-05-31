@@ -71,6 +71,13 @@ Defines data encode/decode strategies via the Protocol type.
 See TODO.org.
 
 
+# Contributors
+* [Ozgun Ataman](http://github.com/ozataman)
+* [Doug Beardsley](http://github.com/mightybyte)
+* [Michael Xavier](http://github.com/MichaelXavier)
+* [Thierry Bourrillon](https://github.com/thierry-b)
+
+
 ## Release Notes
 
 
