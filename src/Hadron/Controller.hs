@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns               #-}
+{-# LANGUAGE CPP                        #-}
 {-# LANGUAGE DeriveDataTypeable         #-}
 {-# LANGUAGE DeriveFunctor              #-}
 {-# LANGUAGE EmptyDataDecls             #-}
@@ -259,8 +260,12 @@ utcFormat = "%Y-%m-%d %H:%M:%S.%q"
 instance MRKey UTCTime where
     toCompKey = toCompKey . formatTime LC.defaultTimeLocale utcFormat
     keyParser = do
-        res <- parseTimeM True LC.defaultTimeLocale utcFormat <$> keyParser
-        maybe (fail "Can't parse value as UTCTime") return res
+# if MIN_VERSION_time (1, 5, 0)
+      res <- parseTimeM True LC.defaultTimeLocale utcFormat <$> keyParser
+# else
+      res <- parseTime LC.defaultTimeLocale utcFormat <$> keyParser
+#endif
+      maybe (fail "Can't parse value as UTCTime") return res
     numKeys _ = 1
 
 instance (MRKey a, MRKey b) => MRKey (a,b) where

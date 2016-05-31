@@ -34,7 +34,8 @@ script:
   - stack $ARGS test --no-terminal --haddock --no-haddock-deps
   - stack $ARGS bench
   - stack $ARGS build
-  - stack $ARGS sdist
+# TODO: re-enable sdist when lcs is released and sets an upper bound on base
+#  - stack $ARGS sdist
 # TODO: build example
 
 
