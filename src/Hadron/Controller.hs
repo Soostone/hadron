@@ -99,10 +99,6 @@ module Hadron.Controller
 
     -- * MapReduce Combinators
 
-    , mapReduce
-    , firstBy
-    , mapMR
-    , oneSnap
     , joinMR
 
     , joinStep
@@ -1224,8 +1220,6 @@ joinStep fs = MapReduce mro pSerialize mp Nothing (Left rd)
       rd =  joinReducer fs'
 
 
-mapReduce :: a
-mapReduce = undefined
 -- -------------------------------------------------------------------------------
 -- -- | A generic map-reduce function that should be good enough for most
 -- -- cases.
@@ -1259,8 +1253,6 @@ mapReduce = undefined
 --           return (Just k, b)
 
 
-firstBy :: a
-firstBy = undefined
 -- -------------------------------------------------------------------------------
 -- -- | Deduplicate input objects that have the same key value; the first
 -- -- object seen for each key will be kept.
@@ -1281,8 +1273,6 @@ firstBy = undefined
 --       rd _ acc _ = return $! acc
 
 
-mapMR :: a
-mapMR = undefined
 -- -------------------------------------------------------------------------------
 -- -- | A generic map-only MR step.
 -- mapMR :: (Serialize b) => (v -> IO [b]) -> MapReduce v b
@@ -1297,8 +1287,6 @@ mapMR = undefined
 --       rd = C.map snd
 
 
-oneSnap :: a
-oneSnap = undefined
 -- -------------------------------------------------------------------------------
 -- -- | Do somthing with only the first row we see, putting the result in
 -- -- the given HDFS destination.
