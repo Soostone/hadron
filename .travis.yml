@@ -34,9 +34,9 @@ script:
   - stack $ARGS test --no-terminal --haddock --no-haddock-deps
   - stack $ARGS bench
   - stack $ARGS build
+  - for f in examples/*.hs; do stack $ARGS ghc -- -Wall -Werror $f -o /dev/null; done
 # TODO: re-enable sdist when lcs is released and sets an upper bound on base
 #  - stack $ARGS sdist
-# TODO: build example
 
 
 # Caching so the next build will be fast too.

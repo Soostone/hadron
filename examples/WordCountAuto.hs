@@ -20,8 +20,10 @@ main :: IO ()
 main = hadoopMain [("count", app)] (HadoopRun clouderaDemo def) RSReRun
 
 
+source :: Tap B.ByteString
 source = tap "hdfs://localhost/user/cloudera/full_meta_4.csv.gz" idProtocol
 
+target :: CSV B.ByteString a => Tap a
 target = tap "hdfs://localhost/user/cloudera/wcOut1" (csvProtocol def)
 
 
@@ -42,4 +44,5 @@ reducer' = do
   yield $ [w, B.pack . show $ cnt]
 
 
+app :: Controller ()
 app = connect mr1 [source] target (Just "Counting words")

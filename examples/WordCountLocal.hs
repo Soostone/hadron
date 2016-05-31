@@ -7,10 +7,8 @@
 module Main where
 
 -------------------------------------------------------------------------------
-
 import           Control.Category
 import           Control.Lens
-import           Control.Monad
 import qualified Data.ByteString.Char8 as B
 import qualified Data.Conduit          as C
 import qualified Data.Conduit.List     as C
@@ -27,19 +25,21 @@ main = hadoopMain [("app", app)] (LocalRun def) RSReRun
 
 
 -- notice how path is a file
---source = do
---    t <- binaryDirTap "data" (== "data/sample.csv")
---    return $ t & tapProto %~ (csvProtocol def . )
-
+source :: CSV B.ByteString a => Tap a
 source = tap "data/sample.csv" (csvProtocol def)
 
 
 -- notice how path is a folder
+target :: CSV B.ByteString a => Tap a
 target = tap "data/wordFrequency" (csvProtocol def)
 
+
+truncated :: CSV B.ByteString a => Tap a
 truncated = tap "data/truncated.csv" (csvProtocol def)
 
+
 -- notice how output is a file
+wordCountTarget :: CSV B.ByteString a => Tap a
 wordCountTarget = tap "data/wordCount.csv" (csvProtocol def)
 
 
@@ -61,10 +61,10 @@ reducer'  = do
 -------------------------------------------------------------------------------
 -- | Count the number of words in mr1 output
 mr2 :: MapReduce (Row B.ByteString) (Row B.ByteString)
-mr2 = MapReduce def pSerialize m Nothing (Left r)
+mr2 = MapReduce def pSerialize mapper Nothing (Left r)
     where
-      m :: Mapper (Row B.ByteString) String Int
-      m = C.map (const $ ("count", 1))
+      mapper :: Mapper (Row B.ByteString) String Int
+      mapper = C.map (const $ ("count", 1))
 
       r :: Reducer (String) Int (Row B.ByteString)
       r = do
@@ -73,11 +73,11 @@ mr2 = MapReduce def pSerialize m Nothing (Left r)
 
 
 mr3 :: MapReduce (Row B.ByteString) (Row B.ByteString)
-mr3 = MapReduce opts pSerialize m Nothing r
+mr3 = MapReduce opts pSerialize mapper Nothing r
   where
     opts = def & mroNumReduce .~ Just 0
 
-    m = C.map (\ v -> ((), map (B.take 5) v) )
+    mapper = C.map (\ v -> ((), map (B.take 5) v) )
 
     r = Right (C.map id)
 
@@ -85,7 +85,6 @@ mr3 = MapReduce opts pSerialize m Nothing r
 
 app :: Controller ()
 app = do
-    --src <- source
     let src = source
     connect mr1 [src] target (Just "Counting word frequency")
     connect mr2 [target] wordCountTarget (Just "Counting words")
