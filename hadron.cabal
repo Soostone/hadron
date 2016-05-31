@@ -9,10 +9,15 @@ maintainer:          ozgun.ataman@soostone.com
 category:            Data
 build-type:          Simple
 cabal-version:       >=1.10
+extra-source-files:
+  README.md
+  changelog.md
+  examples/LineCount.hs
+  examples/WordCountAuto.hs
+  examples/WordCount.hs
+  examples/WordCountLocal.hs
+  test/Tests.hs
 
-Flag Examples
-  Description: Build examples
-  Default: False
 
 flag lib-Werror
   default: False
