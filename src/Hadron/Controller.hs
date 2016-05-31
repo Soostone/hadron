@@ -619,20 +619,21 @@ data ConI a where
         -> ConI (Tap (FilePath, B.ByteString))
 
     ConIO :: IO a -> ConI a
-    -- ^ General IO action; both orchestrator and nodes perform the action
+    -- GADTS don't support haddocks yet https://github.com/haskell/haddock/issues/43
+    -- General IO action; both orchestrator and nodes perform the action
 
     OrchIO :: IO a -> ConI ()
-    -- ^ Only the orchestrator performs action
+    -- Only the orchestrator performs action
 
     NodeIO :: IO a -> ConI a
-    -- ^ Only the nodes perform action
+    -- Only the nodes perform action
 
     SetVal :: String -> B.ByteString -> ConI ()
 
     GetVal :: String -> ConI (Maybe B.ByteString)
 
     RunOnce :: Serialize a => IO a -> ConI a
-    -- ^ Only run on orchestrator, then make available to all the
+    -- Only run on orchestrator, then make available to all the
     -- nodes via HDFS.
 
 
