@@ -14,6 +14,10 @@ Flag Examples
   Description: Build examples
   Default: False
 
+flag lib-Werror
+  default: False
+  manual: True
+
 library
   hs-source-dirs:      src
 
@@ -84,6 +88,9 @@ library
                        unordered-containers,
                        vector
 
+  if flag(lib-Werror)
+    ghc-options: -Werror
+
   ghc-options:         -Wall -O2
                        -fwarn-tabs
                        -fno-warn-unused-do-bind
@@ -94,6 +101,10 @@ library
 test-suite test
   type: exitcode-stdio-1.0
   main-is: Tests.hs
+
+  if flag(lib-Werror)
+    ghc-options: -Werror
+
   ghc-options: -Wall -threaded -rtsopts -O0
   hs-source-dirs: test
 

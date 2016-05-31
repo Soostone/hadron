@@ -54,7 +54,6 @@ import           Hadron.Utils
 data FileHandle = FileHandle {
       _fhHandle       :: !Handle
     , _fhFin          :: IO ()
-    , _fhPath         :: !FilePath
     , _fhCount        :: !Int
     , _fhPendingCount :: !Int
     }
@@ -107,7 +106,7 @@ fanWrite fo fp bs = modifyMVar_ (fo ^. fanFiles) go
 
     go !m = do
       (r, p) <- (fo ^. fanCreate) fp
-      go $! M.insert fp (FileHandle r p fp 0 0) m
+      go $! M.insert fp (FileHandle r p 0 0) m
 
 
     chunk = 1024 * 4
@@ -178,12 +177,12 @@ sequentialSinkFanout dispatch conv fo =
 
           case chunk0 of
             Nothing -> goNew
-            Just c@FileChunk{..} -> case fp == _chunkOrig of
+            Just c@FileChunk{..} -> case fp == view chunkOrig c of
               False -> do
-                liftIO $ fanClose fo _chunkTarget
+                liftIO $ fanClose fo (view chunkTarget c)
                 goNew
               True -> do
-                liftIO $ fanWrite fo _chunkTarget bs
+                liftIO $ fanWrite fo (view chunkTarget c) bs
                 return $! (i+1, Just $! c & chunkCnt %~ (+ (B.length bs)))
 
 
@@ -192,13 +191,13 @@ type FanOutSink = forall a m. MonadIO m => (a -> FilePath) -> (a -> m B.ByteStri
 
 
 -------------------------------------------------------------------------------
-test :: IO ()
-test = do
-    fo <- mkFanOut
-      (\ fp -> (,) <$> openFile fp AppendMode <*> pure (return ()))
-    fanWrite fo "test1" "foo"
-    fanWrite fo "test1" "bar"
-    fanWrite fo "test1" "tak"
-    print =<< fanStats fo
-    fanCloseAll fo
-    fanWrite fo "test1" "tak"
+-- test :: IO ()
+-- test = do
+--     fo <- mkFanOut
+--       (\ fp -> (,) <$> openFile fp AppendMode <*> pure (return ()))
+--     fanWrite fo "test1" "foo"
+--     fanWrite fo "test1" "bar"
+--     fanWrite fo "test1" "tak"
+--     print =<< fanStats fo
+--     fanCloseAll fo
+--     fanWrite fo "test1" "tak"

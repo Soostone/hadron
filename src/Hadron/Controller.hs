@@ -69,7 +69,7 @@ module Hadron.Controller
     , binaryDirTap
     , setupBinaryDir
     , fileListTap
-    , fanOutTap, sinkFanOut, sequentialSinkFanout
+    , fanOutTap
     , readTap
     , readHdfsFile
 
@@ -115,8 +115,8 @@ module Hadron.Controller
     ) where
 
 -------------------------------------------------------------------------------
-import           Control.Applicative
-import           Control.Arrow
+import           Control.Applicative          as A
+import           Control.Arrow                (first)
 import           Control.Concurrent.Async
 import           Control.Concurrent.Chan
 import           Control.Concurrent.QSem
@@ -172,7 +172,7 @@ import           Hadron.Utils
 
 
 -------------------------------------------------------------------------------
-echo :: (Applicative m, MonadIO m, LogItem a) => Severity -> a -> LogStr -> m ()
+echo :: (A.Applicative m, MonadIO m, LogItem a) => Severity -> a -> LogStr -> m ()
 echo sev cxt msg = runLog $ logF cxt "Run.Hadoop" sev msg
 
 
@@ -259,7 +259,7 @@ utcFormat = "%Y-%m-%d %H:%M:%S.%q"
 instance MRKey UTCTime where
     toCompKey = toCompKey . formatTime LC.defaultTimeLocale utcFormat
     keyParser = do
-        res <- parseTime LC.defaultTimeLocale utcFormat <$> keyParser
+        res <- parseTimeM True LC.defaultTimeLocale utcFormat <$> keyParser
         maybe (fail "Can't parse value as UTCTime") return res
     numKeys _ = 1
 
@@ -520,7 +520,7 @@ mkUniqueHostToken = do
       <$> getHostName
 
 
-newtype AppLabel = AppLabel { unAppLabel :: T.Text }
+newtype AppLabel = AppLabel T.Text
   deriving (Eq,Show,Read,Ord)
 
 
@@ -794,7 +794,7 @@ orchestrate (Controller p) settings rr s = do
     bracket
       (liftIO $ openFile "hadron.log" AppendMode)
       (liftIO . hClose)
-      (\ h -> do echoInfo ()  "Initiating orchestration..."
+      (\_h -> do echoInfo ()  "Initiating orchestration..."
                  evalStateT (runExceptT (go p)) s)
     where
       go = eval . O.view
@@ -980,7 +980,7 @@ hadoopMain conts settings rr = do
         case lookup nm' conts of
           Nothing -> error (show nm <> " is not a known MapReduce application")
           Just cont -> do
-            res <- orchestrate cont settings rr (def { _csApp = nm' })
+            _ <- orchestrate cont settings rr (def { _csApp = nm' })
             echoInfo () ("Completed MR application " <> ls nm)
       [runToken, arg] -> workNode settings conts runToken arg
       _ -> error "You must provide the name of the MR application to initiate orchestration."
@@ -1001,7 +1001,7 @@ mkArgs mrKey = [ (Map, "mapper_" ++ mrKey)
 -- In this mode, the objective is to find the mapper, combiner or the
 -- reducer that we are supposed to be executing as.
 workNode
-    :: forall m a. (MonadIO m, MonadThrow m, MonadMask m, Functor m)
+    :: forall m. (MonadIO m, MonadThrow m, MonadMask m, Functor m)
     => RunContext
     -> [(AppLabel, Controller ())]
     -> String
@@ -1218,9 +1218,7 @@ joinStep fs = MapReduce mro pSerialize mp Nothing (Left rd)
       rd =  joinReducer fs'
 
 
-
-
-
+mapReduce :: a
 mapReduce = undefined
 -- -------------------------------------------------------------------------------
 -- -- | A generic map-reduce function that should be good enough for most
@@ -1255,6 +1253,7 @@ mapReduce = undefined
 --           return (Just k, b)
 
 
+firstBy :: a
 firstBy = undefined
 -- -------------------------------------------------------------------------------
 -- -- | Deduplicate input objects that have the same key value; the first
@@ -1276,6 +1275,7 @@ firstBy = undefined
 --       rd _ acc _ = return $! acc
 
 
+mapMR :: a
 mapMR = undefined
 -- -------------------------------------------------------------------------------
 -- -- | A generic map-only MR step.
@@ -1291,6 +1291,7 @@ mapMR = undefined
 --       rd = C.map snd
 
 
+oneSnap :: a
 oneSnap = undefined
 -- -------------------------------------------------------------------------------
 -- -- | Do somthing with only the first row we see, putting the result in
@@ -1348,11 +1349,11 @@ joinMR mp = MapReduce mro pSerialize mp' Nothing (Left red)
       -- cache lefts, start emitting upon seeing the first right.
       red = go []
         where
-          go ls = do
+          go ls' = do
             inc <- await
             case inc of
               Nothing -> return ()
-              Just (_, Left r) -> go $! (r:ls)
+              Just (_, Left r) -> go $! (r:ls')
               Just (_, Right b) -> do
-                mapM_ yield [mappend a b | a <- ls]
-                go ls
+                mapM_ yield [mappend a b | a <- ls']
+                go ls'

@@ -10,7 +10,6 @@ module Hadron.Logger
 import           Control.Monad.Trans
 import           Data.IORef
 import           Katip
-import           Katip.Scribes.Handle
 import           System.IO
 import           System.IO.Unsafe
 -------------------------------------------------------------------------------

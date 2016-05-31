@@ -11,6 +11,7 @@ extra-deps:
 flags:
   hadron:
     Examples: True
+    lib-Werror: True
 
 # Extra package databases containing global packages
 extra-package-dbs: []

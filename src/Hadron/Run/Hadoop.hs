@@ -33,6 +33,7 @@ module Hadron.Run.Hadoop
     , mrSettings
     , mrsInput, mrsOutput, mrsPart, mrsNumMap, mrsNumReduce
     , mrsCombine, mrsCompress, mrsOutSep, mrsJobName, mrsComparator
+    , mrsTaskTimeout
 
     , Codec
     , gzipCodec
