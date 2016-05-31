@@ -56,6 +56,7 @@ module Hadron.Run.Hadoop
     ) where
 
 -------------------------------------------------------------------------------
+import           Control.Applicative          as A
 import           Control.Error
 import           Control.Lens
 import           Control.Monad
@@ -88,7 +89,7 @@ import           Hadron.Utils
 
 
 -------------------------------------------------------------------------------
-echo :: (Applicative m, MonadIO m) => Severity -> LogStr -> m ()
+echo :: (A.Applicative m, MonadIO m) => Severity -> LogStr -> m ()
 echo sev msg = runLog $ logMsg "Run.Hadoop" sev msg
 
 
@@ -215,7 +216,7 @@ mrSettings ins out = def { _mrsInput = ins, _mrsOutput = out }
 
 -------------------------------------------------------------------------------
 hadoopMapReduce
-    :: (MonadIO m)
+    :: (Functor m, MonadIO m)
     => HadoopEnv
     -> MapReduceKey
     -> RunToken

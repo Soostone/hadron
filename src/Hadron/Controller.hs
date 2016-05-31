@@ -150,6 +150,7 @@ import           Data.String.Conv
 import qualified Data.Text                    as T
 import           Data.Text.Encoding
 import           Data.Time
+import qualified Data.Time.Locale.Compat      as LC
 import           Data.Typeable
 import           Network.HostName
 import           System.Environment
@@ -256,9 +257,9 @@ utcFormat :: String
 utcFormat = "%Y-%m-%d %H:%M:%S.%q"
 
 instance MRKey UTCTime where
-    toCompKey = toCompKey . formatTime Data.Time.defaultTimeLocale utcFormat
+    toCompKey = toCompKey . formatTime LC.defaultTimeLocale utcFormat
     keyParser = do
-        res <- parseTime Data.Time.defaultTimeLocale utcFormat <$> keyParser
+        res <- parseTime LC.defaultTimeLocale utcFormat <$> keyParser
         maybe (fail "Can't parse value as UTCTime") return res
     numKeys _ = 1
 
@@ -801,7 +802,7 @@ orchestrate (Controller p) settings rr s = do
       eval (Return a) = return a
       eval (i :>>= f) = eval' i >>= go . f
 
-      eval' :: (MonadIO m) => ConI a -> ExceptT String (StateT ContState m) a
+      eval' :: (Functor m, MonadIO m) => ConI a -> ExceptT String (StateT ContState m) a
 
       eval' (ConIO f) = liftIO f
 

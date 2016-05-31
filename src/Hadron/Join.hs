@@ -32,6 +32,7 @@ import           Data.Default
 import           Data.Hashable
 import qualified Data.HashMap.Strict   as HM
 import           Data.List
+import           Data.Monoid           as M
 import           Data.Ord
 import           Data.Serialize
 import           Data.String
@@ -87,7 +88,7 @@ bufToStr
     -- ^ Streaming
 bufToStr defs Buffering{..} = Streaming rs
     where
-      rs = V.fromList $ maybe [] (map mconcat . sequence) groups
+      rs = V.fromList $ maybe [] (map M.mconcat . sequence) groups
 
       -- | Maybe will reduce to Nothing if any of the Inner joins is
       -- missing.

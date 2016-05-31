@@ -22,6 +22,7 @@
 module Hadron.Run.Local where
 
 -------------------------------------------------------------------------------
+import           Control.Applicative          as A
 import           Control.Error
 import           Control.Lens
 import           Control.Monad.Reader
@@ -120,7 +121,7 @@ getInputFiles fp = do
 
 -------------------------------------------------------------------------------
 localMapReduce
-    :: MonadIO m
+    :: (Functor m, MonadIO m)
     => LocalRunSettings
     -> String                   -- ^ MapReduceKey
     -> String                   -- ^ RunToken
@@ -218,7 +219,7 @@ localMapReduce lrs mrKey token H.HadoopRunOpts{..} = do
 
 
 -------------------------------------------------------------------------------
-echo :: (Applicative m, MonadIO m) => Severity -> LogStr -> m ()
+echo :: (A.Applicative m, MonadIO m) => Severity -> LogStr -> m ()
 echo sev msg = runLog $ logMsg "Local" sev msg
 
 
@@ -229,7 +230,10 @@ echoInfo = echo InfoS
 
 -------------------------------------------------------------------------------
 -- | Fail if command not successful.
-clearExit :: MonadIO m => ExceptT String m ExitCode -> ExceptT [Char] m ()
+clearExit
+    :: (Functor m, MonadIO m)
+    => ExceptT String m ExitCode
+    -> ExceptT [Char] m ()
 clearExit f = do
     res <- f
     case res of

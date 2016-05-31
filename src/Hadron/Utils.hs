@@ -5,6 +5,7 @@ module Hadron.Utils where
 
 
 -------------------------------------------------------------------------------
+import           Control.Applicative as A
 import           Control.Lens
 import           Control.Monad
 import           Control.Monad.Trans
@@ -52,7 +53,7 @@ makeLenses ''File
 parseLs :: String -> Maybe File
 parseLs str =
     let xs = split (dropDelims . condense $ oneOf "\t ") str
-    in  File <$> xs !? 0
+    in  File A.<$> xs !? 0
              <*> (xs !? 2 >>= readMay)
              <*> xs !? 3
              <*> xs !? 4

@@ -3,13 +3,13 @@
 
 module Hadron.Logger
     ( module Hadron.Logger
-    , module Katip.Core
+    , module Katip
     ) where
 
 -------------------------------------------------------------------------------
 import           Control.Monad.Trans
 import           Data.IORef
-import           Katip.Core
+import           Katip
 import           Katip.Scribes.Handle
 import           System.IO
 import           System.IO.Unsafe

@@ -76,6 +76,7 @@ library
                        template-haskell,
                        text,
                        time,
+                       time-locale-compat,
                        transformers,
                        transformers-base,
                        unix,

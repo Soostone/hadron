@@ -105,7 +105,7 @@ lset (HadoopRun _ s) = s
 
 -------------------------------------------------------------------------------
 launchMapReduce
-    :: MonadIO m
+    :: (Functor m, MonadIO m)
     => RunContext
     -> String
     -> String

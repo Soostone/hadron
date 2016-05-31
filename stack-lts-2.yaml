@@ -1,4 +1,4 @@
-resolver: lts-5.12
+resolver: lts-2.22
 packages:
 - '.'
 # TODO: have to drop this and depend on an officially released version of lcs
@@ -7,6 +7,12 @@ packages:
 extra-deps:
   - katip-0.2.0.0
   - string-conv-0.1.1
+  - retry-0.7.3
+  - microlens-0.4.4.0
+  - microlens-th-0.4.0.0
+  - errors-2.1.2
+  - unexceptionalio-0.3.0
+
 # Override default flag values for local packages and extra-deps
 flags:
   hadron:

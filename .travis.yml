@@ -10,19 +10,35 @@ addons:
     packages:
     - libgmp-dev
 
+# The different configurations we want to test. You could also do things like
+# change flags or use --stack-yaml to point to a different file.
+env:
+  - ARGS="--stack-yaml=stack-lts-2.yaml"
+  - ARGS="--stack-yaml=stack-lts-3.yaml"
+  - ARGS="--resolver=lts-4"
+  - ARGS="--resolver=lts-5"
+  - ARGS="--resolver=lts-6"
+
+
 before_install:
 # Download and unpack the stack executable
-- mkdir -p ~/.local/bin
-- export PATH=$HOME/.local/bin:$PATH
-- travis_retry curl -L https://www.stackage.org/stack/linux-x86_64 | tar xz --wildcards --strip-components=1 -C ~/.local/bin '*/stack'
+  - mkdir -p ~/.local/bin
+  - export PATH=$HOME/.local/bin:$PATH
+  - travis_retry curl -L https://www.stackage.org/stack/linux-x86_64 | tar xz --wildcards --strip-components=1 -C ~/.local/bin '*/stack'
 
 # This line does all of the work: installs GHC if necessary, build the library,
 # executables, and test suites, and runs the test suites. --no-terminal works
 # around some quirks in Travis's terminal implementation.
 script:
-- stack --no-terminal --install-ghc test
+  - stack $ARGS setup
+  - stack $ARGS test --no-terminal --haddock --no-haddock-deps
+  - stack $ARGS bench
+  - stack $ARGS build
+  - stack $ARGS sdist
+# TODO: build example
+
 
 # Caching so the next build will be fast too.
 cache:
   directories:
-  - $HOME/.stack
+    - $HOME/.stack

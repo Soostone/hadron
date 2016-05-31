@@ -33,6 +33,7 @@ module Hadron.Run.FanOut
     ) where
 
 -------------------------------------------------------------------------------
+import           Control.Applicative     as A
 import           Control.Concurrent.MVar
 import           Control.Lens
 import           Control.Monad
@@ -84,7 +85,7 @@ mkFanOut
     :: (FilePath -> IO (Handle, IO ()))
     -- ^ Open a handle for a given target path
     -> IO FanOut
-mkFanOut f = FanOut <$> newMVar M.empty <*> pure f
+mkFanOut f = FanOut A.<$> newMVar M.empty <*> pure f
 
 
 -------------------------------------------------------------------------------
