@@ -43,6 +43,7 @@ library
   build-depends:
     BoundedChan                       >= 1.0    && < 1.1,
     Glob                              >= 0.7    && < 0.10,
+    array                             >= 0.5    && < 0.6,
     async                             >= 2.0    && < 2.2,
     attoparsec                        >= 0.11   && < 0.14,
     base                              >= 4.5    && < 4.10,
@@ -65,7 +66,6 @@ library
     hostname                          >= 1.0    && < 1.1,
     hslogger                          >= 1.2    && < 1.3,
     katip                             >= 0.5    && < 0.6,
-    lcs                               >= 0.2    && < 0.3,
     lens                              >= 4.0    && < 4.16,
     mmorph                            >= 1.1.0  && < 1.2,
     mtl                               >= 2.2.1  && < 2.3,

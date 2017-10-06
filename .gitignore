@@ -9,5 +9,4 @@ TAGS
 cabal.sandbox.config
 tmp
 *.log
-data
 .stack-work
