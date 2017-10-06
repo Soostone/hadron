@@ -222,7 +222,7 @@ hadoopMapReduce
     -> MapReduceKey
     -> RunToken
     -> HadoopRunOpts
-    -> ExceptT String m ()
+    -> ExceptT T.Text m ()
 hadoopMapReduce HadoopEnv{..} mrKey runToken HadoopRunOpts{..} = do
     exec <- scriptIO getExecutablePath
     prog <- scriptIO getProgName
@@ -240,7 +240,7 @@ hadoopMapReduce HadoopEnv{..} mrKey runToken HadoopRunOpts{..} = do
           [ "Hadoop job failed.", "StdOut:"
           , out, "", "StdErr:", eout]
 
-        hoistEither $ Left $ "MR job failed with: " ++ show e
+        hoistEither $ Left $ T.pack $ "MR job failed with: " ++ show e
     where
       mkArgs exec prog =
             [ "jar", _hsJar] ++

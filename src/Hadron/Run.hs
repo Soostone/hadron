@@ -74,6 +74,7 @@ import           Control.Monad.Trans.Resource
 import qualified Data.ByteString.Char8        as B
 import           Data.Conduit
 import           Data.Conduit.Binary          (sourceFile)
+import           Data.Text                    (Text)
 import           System.Directory
 import           System.FilePath.Posix
 -------------------------------------------------------------------------------
@@ -110,7 +111,7 @@ launchMapReduce
     -> String
     -> String
     -> H.HadoopRunOpts
-    -> ExceptT String m ()
+    -> ExceptT Text m ()
 launchMapReduce (LocalRun env) mrKey token opts =
     ExceptT . L.runLocal env . runExceptT $ (L.localMapReduce env mrKey token opts)
 launchMapReduce (HadoopRun env _) mrKey token opts =

@@ -144,6 +144,7 @@ import           Data.SafeCopy
 import           Data.Serialize
 import           Data.String
 import           Data.String.Conv
+import           Data.Text                    (Text)
 import qualified Data.Text                    as T
 import           Data.Text.Encoding
 import           Data.Time
@@ -791,7 +792,7 @@ orchestrate
     -> RunContext
     -> RerunStrategy
     -> ContState
-    -> m (Either String a)
+    -> m (Either Text a)
 orchestrate (Controller p) settings rr s = do
     bracket
       (liftIO $ openFile "hadron.log" AppendMode)
@@ -804,7 +805,7 @@ orchestrate (Controller p) settings rr s = do
       eval (Return a) = return a
       eval (i :>>= f) = eval' i >>= go . f
 
-      eval' :: (Functor m, MonadIO m) => ConI a -> ExceptT String (StateT ContState m) a
+      eval' :: (Functor m, MonadIO m) => ConI a -> ExceptT Text (StateT ContState m) a
 
       eval' (ConIO f) = liftIO f
 

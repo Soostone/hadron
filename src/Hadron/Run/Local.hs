@@ -34,6 +34,8 @@ import           Data.Default
 import           Data.Hashable
 import           Data.List
 import           Data.Monoid
+import           Data.Text                    (Text)
+import qualified Data.Text                    as T
 import           System.Directory
 import           System.Environment
 import           System.Exit
@@ -126,7 +128,7 @@ localMapReduce
     -> String                   -- ^ MapReduceKey
     -> String                   -- ^ RunToken
     -> H.HadoopRunOpts
-    -> ExceptT String m ()
+    -> ExceptT Text m ()
 localMapReduce lrs mrKey token H.HadoopRunOpts{..} = do
     exPath <- scriptIO getExecutablePath
     echoInfo $ "Launching Hadoop job for MR key: " <> ls mrKey
@@ -232,15 +234,15 @@ echoInfo = echo InfoS
 -- | Fail if command not successful.
 clearExit
     :: (Functor m, MonadIO m)
-    => ExceptT String m ExitCode
-    -> ExceptT [Char] m ()
+    => ExceptT Text m ExitCode
+    -> ExceptT Text m ()
 clearExit f = do
     res <- f
     case res of
       ExitSuccess -> echoInfo "Command successful."
       e -> do
         echo ErrorS $ ls $ "Command failed: " ++ show e
-        hoistEither $ Left $ "Command failed with: " ++ show e
+        hoistEither $ Left $ T.pack $ "Command failed with: " ++ show e
 
 
 -------------------------------------------------------------------------------
