@@ -26,7 +26,7 @@ _ioLogger = unsafePerformIO $ do
   le <- initLogEnv "hadron" "-"
   hSetBuffering stderr LineBuffering
   s <- mkHandleScribe ColorIfTerminal stderr InfoS V3
-  newIORef $ registerScribe "stderr" s le
+  newIORef =<< registerScribe "stderr" s defaultScribeSettings le
 {-# NOINLINE _ioLogger #-}
 
 
