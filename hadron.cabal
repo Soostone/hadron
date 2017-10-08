@@ -40,6 +40,9 @@ library
     Hadron.Types
     Hadron.Utils
 
+  other-modules:
+    Data.List.LCS.HuntSzymanski
+
   build-depends:
     BoundedChan                       >= 1.0    && < 1.1,
     Glob                              >= 0.7    && < 0.10,
