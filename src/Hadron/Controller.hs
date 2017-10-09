@@ -163,7 +163,8 @@ import           Hadron.Logger
 import           Hadron.Protocol
 import           Hadron.Run
 import           Hadron.Run.Hadoop            (mrsInput, mrsJobName,
-                                               mrsNumReduce, mrsOutput)
+                                               mrsNumReduce, mrsOutput,
+                                               tmpRoot)
 import           Hadron.Types
 import           Hadron.Utils
 -------------------------------------------------------------------------------
@@ -800,7 +801,9 @@ orchestrate (Controller p) settings rr s = do
       (\_h -> do echoInfo ()  "Initiating orchestration..."
                  evalStateT (runExceptT (go p)) s)
     where
-      go = eval . O.view
+      go x = do
+        liftIO $ hdfsMkdir settings tmpRoot
+        eval $ O.view x
 
       eval (Return a) = return a
       eval (i :>>= f) = eval' i >>= go . f

@@ -116,10 +116,10 @@ clouderaDemo = HadoopEnv {
 
 -- | Settings for Amazon's EMR instances.
 amazonEMR :: HadoopEnv
-amazonEMR = HadoopEnv {
-              _hsBin = "/home/hadoop/bin/hadoop"
-            , _hsJar = "/home/hadoop/contrib/streaming/hadoop-streaming.jar"
-            }
+amazonEMR = HadoopEnv
+    { _hsBin = "/usr/bin/hadoop"
+    , _hsJar = "/usr/lib/hadoop/hadoop-streaming.jar"
+    }
 
 
 instance Default HadoopEnv where
